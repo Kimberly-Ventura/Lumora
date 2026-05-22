@@ -140,7 +140,7 @@ export default function ShopScreen() {
     }
   };
 
-  const allProducts = dbProducts.length > 0 ? dbProducts : PRODUCTS;
+  const allProducts = dbProducts;
 
   const filteredProducts = allProducts.filter(product => {
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||

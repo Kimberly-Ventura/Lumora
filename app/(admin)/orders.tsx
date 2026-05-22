@@ -62,7 +62,7 @@ export default function AdminOrdersScreen() {
     fetchOrders();
 
     const channel = supabase
-      .channel('orders-channel')
+      .channel(`orders-channel-${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchOrders();
       })

@@ -199,7 +199,7 @@ export default function CartScreen() {
     <ThemedView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.push('/(tabs)/shop')} style={styles.backButton}>
+        <Pressable onPress={() => router.push('/product-list' as any)} style={styles.backButton}>
           <Ionicons name="arrow-back-outline" size={22} color={colors.text} />
         </Pressable>
         <ThemedText style={styles.headerTitle}>MY BAG ({cartItems.reduce((acc, item) => acc + item.quantity, 0)})</ThemedText>
@@ -216,7 +216,7 @@ export default function CartScreen() {
           </ThemedText>
           <Pressable
             style={[styles.shopButton, { backgroundColor: colors.tint }]}
-            onPress={() => router.push('/(tabs)/shop')}
+            onPress={() => router.push('/product-list' as any)}
           >
             <ThemedText style={[styles.shopButtonText, { color: colors.background }]}>
               EXPLORE COLLECTION

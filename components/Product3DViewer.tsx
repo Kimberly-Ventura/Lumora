@@ -12,6 +12,7 @@ interface Product3DViewerProps {
   autoRotate?: boolean;
   enableZoom?: boolean;
   enablePan?: boolean;
+  snapshotTrigger?: number;
 }
 
 const COLOR_TO_IMAGE_MAP: Record<string, any> = {
@@ -177,12 +178,13 @@ animate();
 `;
 
 export const Product3DViewer: React.FC<Product3DViewerProps> = ({ 
-  modelPath,
+  modelPath, 
+  customColor = '#D09252', 
   imageUri,
-  customColor = '#D09252',
-  autoRotate = false,
+  autoRotate = true,
   enableZoom = true,
-  enablePan = true
+  enablePan = true,
+  snapshotTrigger = 0
 }) => {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -191,6 +193,9 @@ export const Product3DViewer: React.FC<Product3DViewerProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const initialColorRef = useRef(customColor);
+  const initialAutoRotateRef = useRef(autoRotate);
+  const initialEnableZoomRef = useRef(enableZoom);
+  const initialEnablePanRef = useRef(enablePan);
 
   useEffect(() => {
     let active = true;
@@ -224,6 +229,29 @@ export const Product3DViewer: React.FC<Product3DViewerProps> = ({
     }
   }, [customColor, isLoading]);
 
+  useEffect(() => {
+    if (snapshotTrigger > 0 && iframeRef.current && !isLoading) {
+      iframeRef.current.contentWindow?.postMessage(
+        JSON.stringify({ type: 'SNAPSHOT' }),
+        '*'
+      );
+    }
+  }, [snapshotTrigger]);
+
+  useEffect(() => {
+    if (iframeRef.current && !isLoading) {
+      iframeRef.current.contentWindow?.postMessage(
+        JSON.stringify({ 
+          type: 'CONTROLS_CHANGE', 
+          enableZoom, 
+          enablePan, 
+          autoRotate 
+        }),
+        '*'
+      );
+    }
+  }, [enableZoom, enablePan, autoRotate, isLoading]);
+
   if (!modelPath) {
     const resolvedImage = imageUri || COLOR_TO_IMAGE_MAP[customColor] || require('@/assets/images/armchair_clean.png');
     return (
@@ -242,8 +270,6 @@ export const Product3DViewer: React.FC<Product3DViewerProps> = ({
     );
   }
 
-  const htmlContent = build3DHTML(resolvedPath, initialColorRef.current, autoRotate, enableZoom, enablePan);
-
   return (
     <View style={styles.container}>
       {isLoading && (
@@ -256,7 +282,7 @@ export const Product3DViewer: React.FC<Product3DViewerProps> = ({
       <iframe
         ref={iframeRef}
         style={{ width: '100%', height: '100%', border: 'none', background: 'transparent' }}
-        srcDoc={htmlContent}
+        src={`/3dviewer.html?model=${encodeURIComponent(resolvedPath)}&color=${encodeURIComponent(initialColorRef.current)}&autoRotate=${initialAutoRotateRef.current}&enableZoom=${initialEnableZoomRef.current}&enablePan=${initialEnablePanRef.current}`}
         onLoad={() => setIsLoading(false)}
       />
     </View>

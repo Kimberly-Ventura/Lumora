@@ -35,7 +35,7 @@ export function Hero({ imageUri }: HeroProps) {
   const handleShopNowPress = async () => {
     const { data } = await supabase.auth.getSession();
     if (data.session) {
-      router.push('/(tabs)/shop');
+      router.push('/(tabs)/shop' as any);
     } else {
       router.push('/signin');
     }

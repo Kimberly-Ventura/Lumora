@@ -1,14 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, StyleSheet, Platform, Pressable, Animated, Dimensions, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Platform, Pressable, Animated, Dimensions, ActivityIndicator, Text } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Image } from 'expo-image';
 import { Product3DViewer } from '@/components/Product3DViewer';
+
+// Only import camera on mobile platforms
+let CameraView: any = null;
+let useCameraPermissions: any = null;
+if (Platform.OS !== 'web') {
+  const cameraModule = require('expo-camera');
+  CameraView = cameraModule.CameraView;
+  useCameraPermissions = cameraModule.useCameraPermissions;
+}
 
 const { width } = Dimensions.get('window');
 
@@ -25,6 +33,36 @@ export default function ARTutorialScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  
+  // Web fallback - AR tutorial is mobile only
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.container, styles.center, { backgroundColor: '#111111' }]}>
+        <View style={styles.webFallbackContainer}>
+          <Ionicons name="phone-portrait-outline" size={48} color="#FFFFFF" />
+          <ThemedText style={styles.webFallbackTitle}>AR Tutorial</ThemedText>
+          <ThemedText style={styles.webFallbackText}>
+            The AR furniture placement tutorial is only available on mobile devices.
+          </ThemedText>
+          <Pressable 
+            onPress={() => router.replace('/(tabs)')}
+            style={styles.webFallbackBtn}
+          >
+            <ThemedText style={styles.webFallbackBtnText}>Return to Store</ThemedText>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  // Mobile AR tutorial continues below
+  if (!useCameraPermissions) {
+    return (
+      <View style={[styles.container, styles.center, { backgroundColor: '#111111' }]}>
+        <ActivityIndicator size="large" color="#FFFFFF" />
+      </View>
+    );
+  }
   
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedColor, setSelectedColor] = useState('#ORIGINAL'); // Active chair customization color
@@ -322,6 +360,38 @@ const styles = StyleSheet.create({
   center: {
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  webFallbackContainer: {
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 24,
+  },
+  webFallbackTitle: {
+    fontFamily: 'PlayfairDisplay-Bold',
+    fontSize: 28,
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  webFallbackText: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 14,
+    color: '#C9BAA3',
+    textAlign: 'center',
+    lineHeight: 20,
+    maxWidth: 300,
+  },
+  webFallbackBtn: {
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+  },
+  webFallbackBtnText: {
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 14,
+    color: '#111111',
+    letterSpacing: 1,
   },
   vignetteOverlay: {
     ...StyleSheet.absoluteFillObject,

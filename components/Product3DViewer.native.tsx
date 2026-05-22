@@ -164,12 +164,19 @@ loader.load('${modelUrl}', (gltf) => {
 const handleMessage = (event) => {
   try {
     const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-    if (data && data.type === 'COLOR_CHANGE' && activeModel) {
+    if (!data) return;
+
+    if (data.type === 'COLOR_CHANGE' && activeModel) {
       activeModel.traverse((child) => {
         if (child.isMesh) {
           applyUpholsteryColor(child, data.color);
         }
       });
+    } else if (data.type === 'CONTROLS_CHANGE') {
+      if (data.enableZoom !== undefined) controls.enableZoom = data.enableZoom;
+      if (data.enablePan !== undefined) controls.enablePan = data.enablePan;
+      if (data.autoRotate !== undefined) controls.autoRotate = data.autoRotate;
+      controls.update();
     }
   } catch (e) {
     console.error('Failed to parse message payload:', e);
@@ -212,6 +219,9 @@ export const Product3DViewer: React.FC<Product3DViewerProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const webViewRef = useRef<WebView>(null);
   const initialColorRef = useRef(customColor); // Store initial color to decouple from HTML rebuilds
+  const initialAutoRotateRef = useRef(autoRotate);
+  const initialEnableZoomRef = useRef(enableZoom);
+  const initialEnablePanRef = useRef(enablePan);
 
   // Auto-resolve local require asset numbers OR pass remote URLs directly
   useEffect(() => {
@@ -245,11 +255,25 @@ export const Product3DViewer: React.FC<Product3DViewerProps> = ({
     }
   }, [customColor, isLoading]);
 
-  // Memoize the HTML so the WebView never hard-reloads on color changes
+  // Handle high-speed dynamic controls updates without reloading
+  useEffect(() => {
+    if (webViewRef.current && !isLoading) {
+      webViewRef.current.postMessage(
+        JSON.stringify({ 
+          type: 'CONTROLS_CHANGE', 
+          enableZoom, 
+          enablePan, 
+          autoRotate 
+        })
+      );
+    }
+  }, [enableZoom, enablePan, autoRotate, isLoading]);
+
+  // Memoize the HTML so the WebView never hard-reloads on color or controls changes
   const html = React.useMemo(() => {
     if (!resolvedPath) return '';
-    return build3DHTML(resolvedPath, initialColorRef.current, autoRotate, enableZoom, enablePan);
-  }, [resolvedPath, autoRotate, enableZoom, enablePan]);
+    return build3DHTML(resolvedPath, initialColorRef.current, initialAutoRotateRef.current, initialEnableZoomRef.current, initialEnablePanRef.current);
+  }, [resolvedPath]);
 
   if (!resolvedPath) {
     return (

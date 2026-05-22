@@ -92,6 +92,7 @@ export default function ProductDetailsScreen() {
   const [previewMode, setPreviewMode] = useState<'3D' | '2D'>('3D');
   const [dbProduct, setDbProduct] = useState<any>(null);
   const [loadingDb, setLoadingDb] = useState(false);
+  const [productNotFound, setProductNotFound] = useState(false);
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -105,11 +106,13 @@ export default function ProductDetailsScreen() {
           .from('products')
           .select('*, categories(name)')
           .eq('id', id)
+          .eq('is_active', true)  // respect the admin hide/show toggle
           .single();
 
         if (error) {
           console.error('Error fetching product from DB:', error);
           setDbProduct(null);
+          setProductNotFound(true);
           return;
         }
 
@@ -124,6 +127,10 @@ export default function ProductDetailsScreen() {
             modelPath: data.model_url || undefined,
             isDbProduct: true
           });
+        } else {
+          // Product exists but is hidden (is_active = false) — treat as not found
+          setDbProduct(null);
+          setProductNotFound(true);
         }
       } catch (err) {
         console.error('Error in fetchProduct:', err);
@@ -154,6 +161,27 @@ export default function ProductDetailsScreen() {
   useEffect(() => {
     checkFavorite();
   }, [id]);
+
+  // Show unavailable screen for hidden/deleted DB products
+  if (productNotFound && !PRODUCT_CATALOG[id as string]) {
+    return (
+      <ThemedView style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+        <Ionicons name="cube-outline" size={64} color="#CCC" />
+        <ThemedText style={{ fontFamily: 'PlayfairDisplay-Bold', fontSize: 22, color: '#111', marginTop: 16 }}>
+          Product Unavailable
+        </ThemedText>
+        <ThemedText style={{ fontFamily: 'Inter-Regular', fontSize: 14, color: '#888', marginTop: 8, textAlign: 'center', paddingHorizontal: 40 }}>
+          This product is no longer available or has been removed.
+        </ThemedText>
+        <Pressable
+          style={{ marginTop: 24, backgroundColor: '#111', paddingHorizontal: 28, paddingVertical: 12, borderRadius: 24 }}
+          onPress={() => router.back()}
+        >
+          <ThemedText style={{ color: '#FFF', fontFamily: 'Inter-SemiBold', fontSize: 14 }}>Go Back</ThemedText>
+        </Pressable>
+      </ThemedView>
+    );
+  }
 
   const checkFavorite = async () => {
     if (id) {

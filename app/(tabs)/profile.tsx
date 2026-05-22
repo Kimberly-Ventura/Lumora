@@ -1,7 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  ActivityIndicator,
+  Image,
+  Alert,
+  Platform,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors, Spacing, Typography } from '@/constants/theme';
@@ -14,15 +25,66 @@ export default function ProfileScreen() {
   const colors = Colors[colorScheme];
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   useEffect(() => {
     const fetchUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
+      if (user?.id) {
+        const saved = await AsyncStorage.getItem(`avatar_${user.id}`);
+        setAvatarUri(saved);
+      }
       setLoading(false);
     };
     fetchUser();
   }, []);
+
+  const handlePickAvatar = async () => {
+    try {
+      // Request permissions
+      if (Platform.OS !== 'web') {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert(
+            'Permission Required',
+            'Please allow access to your photo library to change your profile picture.'
+          );
+          return;
+        }
+      }
+
+      setUploadingAvatar(true);
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets.length > 0) {
+        const uri = result.assets[0].uri;
+        if (user?.id) {
+          await AsyncStorage.setItem(`avatar_${user.id}`, uri);
+          setAvatarUri(uri);
+        }
+      }
+    } catch (err) {
+      console.error('[Profile] Error picking avatar:', err);
+      Alert.alert('Error', 'Could not update profile picture. Please try again.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    if (user?.id) {
+      await AsyncStorage.removeItem(`avatar_${user.id}`);
+      setAvatarUri(null);
+    }
+  };
 
   const handleSignOut = async () => {
     try {
@@ -60,9 +122,37 @@ export default function ProfileScreen() {
           <ActivityIndicator color={colors.tint} style={{ marginTop: Spacing.xl }} />
         ) : user ? (
           <>
-            {/* Avatar */}
-            <View style={[styles.avatarCircle, { backgroundColor: colors.cardBackground, borderColor: colors.tint }]}>
-              <Ionicons name="person" size={44} color={colors.icon} />
+            {/* Avatar with edit button */}
+            <View style={styles.avatarWrapper}>
+              <Pressable onPress={handlePickAvatar} style={styles.avatarPressable}>
+                {uploadingAvatar ? (
+                  <View style={[styles.avatarCircle, { backgroundColor: colors.cardBackground, borderColor: colors.tint }]}>
+                    <ActivityIndicator color={colors.tint} />
+                  </View>
+                ) : avatarUri ? (
+                  <Image
+                    source={{ uri: avatarUri }}
+                    style={[styles.avatarImage, { borderColor: colors.tint }]}
+                  />
+                ) : (
+                  <View style={[styles.avatarCircle, { backgroundColor: colors.cardBackground, borderColor: colors.tint }]}>
+                    <Ionicons name="person" size={44} color={colors.icon} />
+                  </View>
+                )}
+                {/* Camera overlay badge */}
+                <View style={[styles.cameraBadge, { backgroundColor: colors.tint }]}>
+                  <Ionicons name="camera" size={14} color="#FFF" />
+                </View>
+              </Pressable>
+
+              {/* Remove photo button */}
+              {avatarUri && (
+                <Pressable onPress={handleRemoveAvatar} style={styles.removePhotoBtn}>
+                  <ThemedText style={[styles.removePhotoText, { color: '#c0392b' }]}>
+                    Remove photo
+                  </ThemedText>
+                </Pressable>
+              )}
             </View>
 
             <ThemedText style={styles.userName}>
@@ -70,16 +160,27 @@ export default function ProfileScreen() {
             </ThemedText>
             <ThemedText style={styles.userEmail}>{user.email}</ThemedText>
 
+            {/* Change profile picture hint */}
+            <Pressable onPress={handlePickAvatar} style={[styles.changePhotoHint, { borderColor: colors.tint }]}>
+              <Ionicons name="image-outline" size={16} color={colors.tint} />
+              <ThemedText style={[styles.changePhotoText, { color: colors.tint }]}>
+                {avatarUri ? 'Change Profile Picture' : 'Add Profile Picture'}
+              </ThemedText>
+            </Pressable>
+
             <View style={[styles.card, { backgroundColor: colors.cardBackground }]}>
-              <ProfileRow icon="bag-outline" label="My Orders" colors={colors} />
-              <ProfileRow icon="heart-outline" label="Wishlist" colors={colors} />
-              <ProfileRow icon="location-outline" label="Shipping Address" colors={colors} />
-              <ProfileRow icon="card-outline" label="Payment Methods" colors={colors} />
+              <ProfileRow icon="bag-outline" label="My Orders" colors={colors} onPress={() => {}} />
+              <ProfileRow icon="heart-outline" label="Wishlist" colors={colors} onPress={() => router.push('/wishlist' as any)} />
+              <ProfileRow icon="location-outline" label="Shipping Address" colors={colors} onPress={() => {}} />
+              <ProfileRow icon="card-outline" label="Payment Methods" colors={colors} onPress={() => {}} />
             </View>
 
             <View style={[styles.card, { backgroundColor: colors.cardBackground }]}>
-              <ProfileRow icon="settings-outline" label="Settings" colors={colors} />
-              <ProfileRow icon="help-circle-outline" label="Help & Support" colors={colors} />
+              <ProfileRow icon="settings-outline" label="Settings" colors={colors} onPress={() => {}} />
+              <ProfileRow icon="help-circle-outline" label="Help & Support" colors={colors} onPress={() => {}} />
+              <ProfileRow icon="newspaper-outline" label="Blog" colors={colors} onPress={() => router.push('/blog' as any)} />
+              <ProfileRow icon="mail-outline" label="Contact" colors={colors} onPress={() => router.push('/contact' as any)} />
+              <ProfileRow icon="information-circle-outline" label="About" colors={colors} onPress={() => router.push('/about' as any)} />
             </View>
 
             <Pressable
@@ -153,14 +254,63 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.l,
     gap: Spacing.s,
   },
+  avatarWrapper: {
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  avatarPressable: {
+    position: 'relative',
+  },
   avatarCircle: {
     width: 96,
     height: 96,
     borderRadius: 48,
-    borderWidth: 1,
+    borderWidth: 2,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: Spacing.xs,
+  },
+  avatarImage: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 2,
+  },
+  cameraBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFF',
+  },
+  removePhotoBtn: {
+    marginTop: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  removePhotoText: {
+    fontSize: 12,
+    fontFamily: 'Inter-Regular',
+    textDecorationLine: 'underline',
+  },
+  changePhotoHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginBottom: 4,
+  },
+  changePhotoText: {
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 13,
+    letterSpacing: 0.5,
   },
   userName: {
     fontSize: 20,
@@ -170,7 +320,7 @@ const styles = StyleSheet.create({
   },
   userEmail: {
     ...Typography.bodyText,
-    marginBottom: Spacing.s,
+    marginBottom: Spacing.xs,
   },
   card: {
     width: '100%',

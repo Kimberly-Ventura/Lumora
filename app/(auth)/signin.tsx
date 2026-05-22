@@ -41,20 +41,18 @@ export default function SignInScreen() {
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
           .select('email')
-          .eq('username', email.trim().toLowerCase())
+          .ilike('username', email.trim())   // case-insensitive match
           .single();
 
-        if (profileError) {
-          console.error('[SignIn] Profile lookup error:', profileError.message, profileError.code);
-        }
-
-        if (profileError || !profileData) {
+        if (profileError || !profileData?.email) {
           setError('No account found with that username. Please use your email instead.');
           setLoading(false);
           return;
         }
-        loginEmail = profileData.email;
+        loginEmail = profileData.email.trim().toLowerCase();
         console.log(`[SignIn] Resolved username to email: ${loginEmail}`);
+      } else {
+        loginEmail = email.trim().toLowerCase();
       }
 
       console.log(`[SignIn] Attempting sign in with email: ${loginEmail}`);
@@ -66,7 +64,11 @@ export default function SignInScreen() {
 
       if (authError) {
         console.error('[SignIn] Auth error:', authError.message, authError.status);
-        setError('Invalid credentials. Please check your email/username and password.');
+        if (authError.message.toLowerCase().includes('email not confirmed')) {
+          setError('Please confirm your email address before signing in. Check your inbox.');
+        } else {
+          setError('Invalid email or password. Please try again.');
+        }
       } else {
         console.log('[SignIn] Success, user:', signInData?.user?.email);
         

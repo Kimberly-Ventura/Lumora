@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: transparent !important; overflow: hidden; }
+    canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; background: transparent !important; }
+  </style>
+  <script src="/libs/three.min.js"></script>
+  <script src="/libs/OrbitControls.js"></script>
+  <script src="/libs/GLTFLoader.js"></script>
+</head>
+<body>
+<script>
+const urlParams = new URLSearchParams(window.location.search);
+const modelUrl = urlParams.get('model');
+const initialColor = urlParams.get('color') || '#D09252';
+const autoRotate = urlParams.get('autoRotate') === 'true';
+const enableZoom = urlParams.get('enableZoom') !== 'false';
+const enablePan = urlParams.get('enablePan') !== 'false';
+
+const scene = new THREE.Scene();
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 0.4, 4.2);
+
+const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+scene.add(ambient);
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+dirLight.position.set(5, 8, 5);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(1024, 1024);
+dirLight.shadow.bias = -0.0005;
+scene.add(dirLight);
+
+const pointLight = new THREE.PointLight(0xFFF5E0, 0.4);
+pointLight.position.set(-4, 4, -4);
+scene.add(pointLight);
+
+const shadowGeo = new THREE.PlaneGeometry(12, 12);
+const shadowMat = new THREE.ShadowMaterial({ opacity: 0.10 });
+const ground = new THREE.Mesh(shadowGeo, shadowMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -1.25;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableZoom = enableZoom;
+controls.minDistance = 1.0;
+controls.maxDistance = 12.0;
+controls.enablePan = enablePan;
+controls.autoRotate = autoRotate;
+controls.autoRotateSpeed = 1.5;
+controls.target.set(0, -0.2, 0);
+controls.update();
+
+function applyUpholsteryColor(mesh, colorHex) {
+  if (!mesh.material) return;
+  if (!mesh.userData.materialCloned) {
+    mesh.material = mesh.material.clone();
+    mesh.userData.materialCloned = true;
+    mesh.userData.originalColor = mesh.material.color.clone();
+    mesh.userData.originalMap = mesh.material.map;
+  }
+  const matName = (mesh.material.name || '').toLowerCase();
+  const meshName = (mesh.name || '').toLowerCase();
+  const isCushion = matName.includes('fabric') || matName.includes('cushion') || 
+                    matName.includes('leather') || matName.includes('seat') || 
+                    matName.includes('upholstery') || meshName.includes('cushion') || 
+                    meshName.includes('seat') || meshName.includes('fabric');
+  const isNotFrame = !matName.includes('wood') && !matName.includes('leg') && 
+                     !matName.includes('metal') && !meshName.includes('leg') && 
+                     !meshName.includes('frame');
+
+  if (isCushion || isNotFrame) {
+    if (colorHex === '#ORIGINAL') {
+      if (mesh.userData.originalColor) mesh.material.color.copy(mesh.userData.originalColor);
+      mesh.material.map = mesh.userData.originalMap;
+    } else {
+      mesh.material.color.set(colorHex);
+      mesh.material.map = null;
+    }
+    mesh.material.needsUpdate = true;
+  }
+}
+
+let activeModel = null;
+const loader = new THREE.GLTFLoader();
+loader.load(modelUrl, (gltf) => {
+  activeModel = gltf.scene;
+  const box = new THREE.Box3().setFromObject(activeModel);
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const scale = 2.4 / maxDim;
+  activeModel.scale.setScalar(scale);
+  const center = box.getCenter(new THREE.Vector3());
+  activeModel.position.x = -center.x * scale;
+  activeModel.position.y = -box.min.y * scale - 1.25;
+  activeModel.position.z = -center.z * scale;
+  
+  activeModel.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+      applyUpholsteryColor(child, initialColor);
+    }
+  });
+  scene.add(activeModel);
+}, undefined, (err) => {
+  console.error('Error loading 3D GLTF asset:', err);
+});
+
+const handleMessage = (event) => {
+  try {
+    const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+    if (!data) return;
+
+    if (data.type === 'COLOR_CHANGE' && activeModel) {
+      applyUpholsteryColor(activeModel, data.color);
+      activeModel.traverse((child) => {
+        if (child.isMesh) {
+          applyUpholsteryColor(child, data.color);
+        }
+      });
+    } else if (data.type === 'CONTROLS_CHANGE') {
+      if (data.enableZoom !== undefined) controls.enableZoom = data.enableZoom;
+      if (data.enablePan !== undefined) controls.enablePan = data.enablePan;
+      if (data.autoRotate !== undefined) controls.autoRotate = data.autoRotate;
+      controls.update();
+    } else if (data.type === 'SNAPSHOT') {
+      renderer.render(scene, camera);
+      const dataURL = renderer.domElement.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = 'lumora-3d-snapshot.png';
+      link.href = dataURL;
+      link.click();
+    }
+  } catch (e) {
+    console.error('Error in iframe handleMessage:', e);
+  }
+};
+window.addEventListener('message', handleMessage);
+document.addEventListener('message', handleMessage);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
+

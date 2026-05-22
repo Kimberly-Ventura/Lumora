@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, StyleSheet, View, Pressable, Platform, useWindowDimensions, Modal, ScrollView } from 'react-native';
+import { Animated, StyleSheet, View, Pressable, Platform, useWindowDimensions, Modal, ScrollView, Image, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { ThemedText } from './themed-text';
@@ -7,6 +7,9 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRouter, usePathname, useSegments } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import { TextInput } from 'react-native-gesture-handler';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useCustomerNotifications } from '@/hooks/use-customer-notifications';
 
 export function Header() {
   const router = useRouter();
@@ -16,26 +19,14 @@ export function Header() {
   const colors = Colors[colorScheme];
   const { width } = useWindowDimensions();
   const [session, setSession] = useState<any>(null);
-  const [drawerVisible, setDrawerVisible] = useState(false);
-  const slideAnim = useRef(new Animated.Value(-320)).current; // starts off-screen left
+  const [searchQuery, setSearchQuery] = useState('');
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  const openDrawer = () => {
-    setDrawerVisible(true);
-    Animated.spring(slideAnim, {
-      toValue: 0,
-      useNativeDriver: true,
-      speed: 20,
-      bounciness: 4,
-    }).start();
-  };
-
-  const closeDrawer = () => {
-    Animated.timing(slideAnim, {
-      toValue: -320,
-      duration: 220,
-      useNativeDriver: true,
-    }).start(() => setDrawerVisible(false));
-  };
+  // Customer notifications — mobile only, logged-in users only
+  const userId = session?.user?.id ?? null;
+  const { unreadCount } = useCustomerNotifications(
+    Platform.OS !== 'web' ? userId : null
+  );
 
   useEffect(() => {
     // Get initial session
@@ -50,6 +41,27 @@ export function Header() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Load avatar from AsyncStorage whenever session changes
+  useEffect(() => {
+    const loadAvatar = async () => {
+      try {
+        const userId = session?.user?.id;
+        if (userId) {
+          const uri = await AsyncStorage.getItem(`avatar_${userId}`);
+          setAvatarUri(uri);
+        } else {
+          setAvatarUri(null);
+        }
+      } catch (e) {
+        setAvatarUri(null);
+      }
+    };
+    loadAvatar();
+    // Poll every 2 seconds to pick up profile picture changes
+    const interval = setInterval(loadAvatar, 2000);
+    return () => clearInterval(interval);
+  }, [session]);
 
   // If the active screen is part of the (tabs) folder, it is a primary root tab screen (except /shop, which gets a back button)
   const isRootScreen = segments[0] === '(tabs)' && pathname !== '/shop';
@@ -67,153 +79,91 @@ export function Header() {
   return (
     <View style={styles.wrapper}>
       <BlurView intensity={20} tint={colorScheme} style={[styles.container, { borderBottomColor: colors.border }]}>
-        <View style={styles.leftSection}>
-          {/* Show hamburger on ALL platforms when mobile and at a root screen */}
-          {isMobile && isRootScreen && (
-            <Pressable style={styles.hamburgerButton} onPress={openDrawer}>
-              <Ionicons name="menu-outline" size={24} color={colors.text} />
-            </Pressable>
-          )}
-          {/* Show back arrow on inner screens on all platforms */}
-          {showBackButton && (
-            <Pressable style={styles.backButton} onPress={handleBack}>
-              <Ionicons name="arrow-back" size={22} color={colors.text} />
-            </Pressable>
-          )}
-          <ThemedText style={[styles.logo, { color: colors.text }]}>LUMORA</ThemedText>
-        </View>
-        
-        {Platform.OS === 'web' && !isMobile && (
-          <View style={styles.navLinks}>
-            <Pressable onPress={() => router.push('/(tabs)')}>
-              <ThemedText style={styles.navLink}>Home</ThemedText>
-            </Pressable>
-            <Pressable onPress={() => router.push('/shop' as any)}>
-              <ThemedText style={styles.navLink}>Shop</ThemedText>
-            </Pressable>
-            <Pressable onPress={() => router.push('/blog' as any)}>
-              <ThemedText style={styles.navLink}>Blog</ThemedText>
-            </Pressable>
-            <Pressable onPress={() => router.push('/contact' as any)}>
-              <ThemedText style={styles.navLink}>Contact</ThemedText>
-            </Pressable>
-            <Pressable onPress={() => router.push('/about' as any)}>
-              <ThemedText style={styles.navLink}>About</ThemedText>
-            </Pressable>
+        <View style={styles.topRow}>
+          <View style={styles.leftSection}>
+
+            {/* Show back arrow on inner screens on all platforms */}
+            {showBackButton && (
+              <Pressable style={styles.backButton} onPress={handleBack}>
+                <Ionicons name="arrow-back" size={26} color={colors.text} />
+              </Pressable>
+            )}
+            <ThemedText style={[styles.logo, { color: colors.text }]}>LUMORA</ThemedText>
           </View>
-        )}
-        
-        <View style={styles.rightIcons}>
-          {(!isMobile || width > 360) && (
-            <Pressable style={styles.iconButton} onPress={() => router.push('/wishlist' as any)}>
-              <Ionicons name="heart-outline" size={20} color={colors.text} />
-            </Pressable>
-          )}
-          {!isMobile && (
-            <Pressable style={styles.iconButton} onPress={() => router.push('/(tabs)/profile')}>
-              <Ionicons name="person-outline" size={20} color={colors.text} />
-            </Pressable>
-          )}
-          <Pressable style={styles.iconButton} onPress={() => router.push('/(tabs)/cart')}>
-            <Ionicons name="bag-outline" size={20} color={colors.text} />
-          </Pressable>
           
-          {Platform.OS === 'web' && !isMobile && !session && (
-            <View style={styles.authContainer}>
-              <View style={[styles.divider, { backgroundColor: colors.border }]} />
-              <Pressable onPress={() => router.push('/signin')}>
-                <ThemedText style={styles.loginText}>Log In</ThemedText>
+          {Platform.OS === 'web' && !isMobile && (
+            <View style={styles.navLinks}>
+              <Pressable onPress={() => router.push('/(tabs)')}>
+                <ThemedText style={styles.navLink}>Home</ThemedText>
+              </Pressable>
+              <Pressable onPress={() => router.push('/shop' as any)}>
+                <ThemedText style={styles.navLink}>Shop</ThemedText>
+              </Pressable>
+              <Pressable onPress={() => router.push('/blog' as any)}>
+                <ThemedText style={styles.navLink}>Blog</ThemedText>
+              </Pressable>
+              <Pressable onPress={() => router.push('/contact' as any)}>
+                <ThemedText style={styles.navLink}>Contact</ThemedText>
+              </Pressable>
+              <Pressable onPress={() => router.push('/about' as any)}>
+                <ThemedText style={styles.navLink}>About</ThemedText>
               </Pressable>
             </View>
           )}
-        </View>
-      </BlurView>
-
-      {/* Left-side slide-in Drawer — animates horizontally via Animated.Value */}
-      <Modal
-        animationType="none"
-        transparent={true}
-        visible={drawerVisible}
-        onRequestClose={closeDrawer}
-        statusBarTranslucent
-      >
-        {/* Full-screen dim backdrop — tap anywhere outside panel to close */}
-        <Pressable style={styles.drawerOverlay} onPress={closeDrawer}>
-          {/* Stop tap propagation so touching inside panel doesn't close it */}
-          <Animated.View
-            style={[styles.drawerContent, { transform: [{ translateX: slideAnim }] }]}
-          >
-            <Pressable onPress={() => {}} style={{ flex: 1 }}>
-              {/* Panel header */}
-              <View style={styles.drawerHeader}>
-                <ThemedText style={styles.drawerLogo}>LUMORA</ThemedText>
-                <Pressable onPress={closeDrawer} style={styles.drawerCloseBtn} hitSlop={12}>
-                  <Ionicons name="close" size={22} color="#111" />
+          
+          <View style={styles.rightIcons}>
+            {/* Bell — mobile only, logged-in users only */}
+            {Platform.OS !== 'web' && session && (
+              <Pressable
+                style={styles.iconButton}
+                onPress={() => router.push('/notifications' as any)}
+                accessibilityLabel="Notifications"
+              >
+                <View style={styles.bellWrapper}>
+                  <Ionicons name="notifications-outline" size={24} color={colors.text} />
+                  {unreadCount > 0 && (
+                    <View style={styles.bellBadge}>
+                      <Text style={styles.bellBadgeText}>
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </Pressable>
+            )}
+            <Pressable style={styles.iconButton} onPress={() => router.push('/(tabs)/profile')}>
+              {session && avatarUri ? (
+                <Image
+                  source={{ uri: avatarUri }}
+                  style={styles.avatarSmall}
+                />
+              ) : session ? (
+                <View style={[styles.avatarSmallCircle, { backgroundColor: colors.tint }]}>
+                  <ThemedText style={styles.avatarInitial}>
+                    {session.user?.user_metadata?.username?.[0]?.toUpperCase() ||
+                      session.user?.email?.[0]?.toUpperCase() || '?'}
+                  </ThemedText>
+                </View>
+              ) : (
+                <Ionicons name="person-outline" size={24} color={colors.text} />
+              )}
+            </Pressable>
+            
+            {Platform.OS === 'web' && !isMobile && !session && (
+              <View style={styles.authContainer}>
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                <Pressable onPress={() => router.push('/signin')}>
+                  <ThemedText style={styles.loginText}>Log In</ThemedText>
                 </Pressable>
               </View>
+            )}
+          </View>
+        </View>
 
-              <ScrollView contentContainerStyle={styles.drawerLinks} showsVerticalScrollIndicator={false}>
-                {/* Main nav */}
-                <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/(tabs)'), 250); }}>
-                  <Ionicons name="home-outline" size={20} color="#333" />
-                  <ThemedText style={styles.drawerLinkText}>Home</ThemedText>
-                </Pressable>
-                <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/(tabs)/shop' as any), 250); }}>
-                  <Ionicons name="grid-outline" size={20} color="#333" />
-                  <ThemedText style={styles.drawerLinkText}>Shop</ThemedText>
-                </Pressable>
-                <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/blog' as any), 250); }}>
-                  <Ionicons name="newspaper-outline" size={20} color="#333" />
-                  <ThemedText style={styles.drawerLinkText}>Blog</ThemedText>
-                </Pressable>
-                <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/contact' as any), 250); }}>
-                  <Ionicons name="mail-outline" size={20} color="#333" />
-                  <ThemedText style={styles.drawerLinkText}>Contact</ThemedText>
-                </Pressable>
-                <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/about' as any), 250); }}>
-                  <Ionicons name="information-circle-outline" size={20} color="#333" />
-                  <ThemedText style={styles.drawerLinkText}>About</ThemedText>
-                </Pressable>
+      </BlurView>
 
-                <View style={styles.drawerDivider} />
 
-                <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/wishlist' as any), 250); }}>
-                  <Ionicons name="heart-outline" size={20} color="#333" />
-                  <ThemedText style={styles.drawerLinkText}>Wishlist</ThemedText>
-                </Pressable>
-                <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/(tabs)/profile'), 250); }}>
-                  <Ionicons name="person-outline" size={20} color="#333" />
-                  <ThemedText style={styles.drawerLinkText}>My Profile</ThemedText>
-                </Pressable>
-                <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/(tabs)/cart'), 250); }}>
-                  <Ionicons name="bag-outline" size={20} color="#333" />
-                  <ThemedText style={styles.drawerLinkText}>My Bag (Cart)</ThemedText>
-                </Pressable>
-                {!session && (
-                  <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/(admin)/pin'), 250); }}>
-                    <Ionicons name="shield-checkmark-outline" size={20} color="#333" />
-                    <ThemedText style={styles.drawerLinkText}>Admin Portal</ThemedText>
-                  </Pressable>
-                )}
 
-                <View style={styles.drawerDivider} />
-
-                {session ? (
-                  <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); supabase.auth.signOut(); setTimeout(() => router.push('/signin'), 250); }}>
-                    <Ionicons name="log-out-outline" size={20} color="#E74C3C" />
-                    <ThemedText style={[styles.drawerLinkText, { color: '#E74C3C' }]}>Sign Out</ThemedText>
-                  </Pressable>
-                ) : (
-                  <Pressable style={styles.drawerLinkRow} onPress={() => { closeDrawer(); setTimeout(() => router.push('/signin'), 250); }}>
-                    <Ionicons name="log-in-outline" size={20} color="#333" />
-                    <ThemedText style={styles.drawerLinkText}>Log In</ThemedText>
-                  </Pressable>
-                )}
-              </ScrollView>
-            </Pressable>
-          </Animated.View>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -227,16 +177,20 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
   container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: 'column',
+    justifyContent: 'center',
     paddingHorizontal: 24,
-    paddingVertical: 15,
-    paddingTop: Platform.OS === 'web' ? 15 : 60,
+    paddingTop: Platform.OS === 'web' ? 10 : 35,
     borderBottomColor: 'rgba(0, 0, 0, 0.1)',
     borderBottomWidth: 1,
     backgroundColor: 'rgba(246, 241, 235, 0.9)',
-    height: Platform.OS === 'web' ? 70 : 110,
+    height: Platform.OS === 'web' ? 80 : 110,
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
   },
   leftSection: {
     flexDirection: 'row',
@@ -271,10 +225,54 @@ const styles = StyleSheet.create({
   rightIcons: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 15,
+    gap: 8,
   },
   iconButton: {
-    padding: 4,
+    padding: 2,
+  },
+  bellWrapper: {
+    position: 'relative',
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#C9A96E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: {
+    fontFamily: 'DMSans-Bold',
+    fontSize: 9,
+    color: '#2B1F14',
+    lineHeight: 14,
+  },
+  avatarSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#A06E50',
+  },
+  avatarSmallCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarInitial: {
+    color: '#FFF',
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 13,
   },
   authContainer: {
     flexDirection: 'row',
@@ -349,5 +347,25 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: 'rgba(0,0,0,0.08)',
     marginVertical: 14,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DCD8D3',
+    paddingHorizontal: 16,
+    height: 52,
+    backgroundColor: '#FAF9F6',
+    width: '100%',
+  },
+  searchIcon: {
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontFamily: 'Inter-Regular',
+    fontSize: 14,
+    color: '#111',
   },
 });

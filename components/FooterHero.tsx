@@ -33,7 +33,7 @@ export function FooterHero() {
   const handleShopNowPress = async () => {
     const { data } = await supabase.auth.getSession();
     if (data.session) {
-      router.push('/(tabs)/shop');
+      router.push('/(tabs)/shop' as any);
     } else {
       router.push('/signin');
     }
@@ -56,23 +56,7 @@ export function FooterHero() {
               Minimal, functional, and beautifully crafted the perfect finish to{'\n'}your modern home.
             </ThemedText>
             
-            <Animated.View style={{ 
-              transform: [{ scale: scaleAnim }],
-              opacity: scaleAnim.interpolate({
-                inputRange: [0.95, 1],
-                outputRange: [0.7, 1]
-              })
-            }}>
-              <Pressable 
-                style={styles.button}
-                onPressIn={handlePressIn}
-                onPressOut={handlePressOut}
-                onPress={handleShopNowPress}
-              >
-                <ThemedText style={styles.buttonText}>Shop Now</ThemedText>
-                <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
-              </Pressable>
-            </Animated.View>
+
           </View>
 
           {/* Footer Links */}

@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator, Alert, useWindowDimensions, Platform, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator, Alert, useWindowDimensions, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { AdminTheme } from '@/constants/theme';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Interfaces
 interface StoreSettings {
@@ -49,12 +48,6 @@ export default function AdminSettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<StoreSettings>(defaultSettings);
-  
-  // PIN Modal State
-  const [pinModalVisible, setPinModalVisible] = useState(false);
-  const [currentPin, setCurrentPin] = useState('');
-  const [newPin, setNewPin] = useState('');
-  const [confirmPin, setConfirmPin] = useState('');
 
   useEffect(() => {
     fetchSettings();
@@ -107,39 +100,6 @@ export default function AdminSettingsScreen() {
       else Alert.alert('Error', 'Failed to save settings.');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handlePinChange = async () => {
-    if (newPin.length !== 4 || confirmPin.length !== 4) {
-      if (Platform.OS === 'web') window.alert('PIN must be 4 digits.');
-      else Alert.alert('Error', 'PIN must be 4 digits.');
-      return;
-    }
-    if (newPin !== confirmPin) {
-      if (Platform.OS === 'web') window.alert('New PINs do not match.');
-      else Alert.alert('Error', 'New PINs do not match.');
-      return;
-    }
-
-    try {
-      const storedPin = await AsyncStorage.getItem('admin_pin') || '1234';
-      if (currentPin !== storedPin) {
-        if (Platform.OS === 'web') window.alert('Current PIN is incorrect.');
-        else Alert.alert('Error', 'Current PIN is incorrect.');
-        return;
-      }
-
-      await AsyncStorage.setItem('admin_pin', newPin);
-      setPinModalVisible(false);
-      setCurrentPin('');
-      setNewPin('');
-      setConfirmPin('');
-      
-      if (Platform.OS === 'web') window.alert('PIN changed successfully!');
-      else Alert.alert('Success', 'PIN changed successfully!');
-    } catch (err) {
-      console.error('Error saving PIN:', err);
     }
   };
 
@@ -310,21 +270,6 @@ export default function AdminSettingsScreen() {
           {/* 3. Security */}
           <View style={[styles.card, isMobile && styles.cardMobile]}>
             <Text style={styles.sectionTitle}>SECURITY</Text>
-            
-            <View style={styles.rowItem}>
-              <View>
-                <Text style={styles.rowLabel}>Admin PIN</Text>
-                <View style={styles.dotsRow}>
-                  <View style={styles.pinDot} /><View style={styles.pinDot} /><View style={styles.pinDot} /><View style={styles.pinDot} />
-                  <Text style={styles.hiddenText}>Current PIN hidden</Text>
-                </View>
-              </View>
-              <Pressable style={styles.outlineBtn} onPress={() => setPinModalVisible(true)}>
-                <Text style={styles.outlineBtnText}>Change PIN</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.divider} />
 
             <View style={styles.rowItem}>
               <Text style={styles.rowLabel}>Session auto lock</Text>
@@ -334,11 +279,11 @@ export default function AdminSettingsScreen() {
             {settings.auto_lock && (
               <View style={styles.rowItem}>
                 <Text style={styles.rowLabel}>Lock after (minutes)</Text>
-                <TextInput 
-                  style={[styles.input, { width: 80, textAlign: 'right' }]} 
+                <TextInput
+                  style={[styles.input, { width: 80, textAlign: 'right' }]}
                   keyboardType="numeric"
-                  value={settings.auto_lock_minutes} 
-                  onChangeText={(v) => updateSetting('auto_lock_minutes', v)} 
+                  value={settings.auto_lock_minutes}
+                  onChangeText={(v) => updateSetting('auto_lock_minutes', v)}
                 />
               </View>
             )}
@@ -384,54 +329,6 @@ export default function AdminSettingsScreen() {
         </View>
 
       </ScrollView>
-
-      {/* Change PIN Modal */}
-      <Modal visible={pinModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Change PIN</Text>
-            
-            <Text style={styles.label}>Current PIN</Text>
-            <TextInput 
-              style={styles.input} 
-              secureTextEntry
-              maxLength={4}
-              keyboardType="number-pad"
-              value={currentPin}
-              onChangeText={setCurrentPin}
-            />
-
-            <Text style={[styles.label, { marginTop: 16 }]}>New PIN</Text>
-            <TextInput 
-              style={styles.input} 
-              secureTextEntry
-              maxLength={4}
-              keyboardType="number-pad"
-              value={newPin}
-              onChangeText={setNewPin}
-            />
-
-            <Text style={[styles.label, { marginTop: 16 }]}>Confirm New PIN</Text>
-            <TextInput 
-              style={styles.input} 
-              secureTextEntry
-              maxLength={4}
-              keyboardType="number-pad"
-              value={confirmPin}
-              onChangeText={setConfirmPin}
-            />
-
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalCancelBtn} onPress={() => setPinModalVisible(false)}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.modalSaveBtn} onPress={handlePinChange}>
-                <Text style={styles.modalSaveText}>Update</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
     </SafeAreaView>
   );
@@ -600,37 +497,6 @@ const styles = StyleSheet.create({
     transform: [{ translateX: 20 }],
   },
 
-  // Security UI
-  dotsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  pinDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: AdminTheme.accent,
-  },
-  hiddenText: {
-    fontFamily: 'Inter-Regular',
-    fontSize: 12,
-    color: AdminTheme.textMuted,
-    marginLeft: 8,
-  },
-  outlineBtn: {
-    borderWidth: 1,
-    borderColor: AdminTheme.accent,
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  outlineBtnText: {
-    fontFamily: 'Inter-SemiBold',
-    fontSize: 13,
-    color: AdminTheme.accent,
-  },
   dangerBtn: {
     borderWidth: 1,
     borderColor: '#B71C1C',
@@ -667,53 +533,5 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Regular',
     fontSize: 11,
     color: AdminTheme.textMuted,
-  },
-
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: '#FAF7F2',
-    borderRadius: 12,
-    padding: 24,
-  },
-  modalTitle: {
-    fontFamily: 'CormorantGaramond-Bold',
-    fontSize: 24,
-    color: AdminTheme.primaryDark,
-    marginBottom: 20,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-    marginTop: 24,
-  },
-  modalCancelBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  modalCancelText: {
-    fontFamily: 'Inter-SemiBold',
-    fontSize: 14,
-    color: AdminTheme.textMuted,
-  },
-  modalSaveBtn: {
-    backgroundColor: AdminTheme.accent,
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 6,
-  },
-  modalSaveText: {
-    fontFamily: 'Inter-SemiBold',
-    fontSize: 14,
-    color: '#111',
   },
 });

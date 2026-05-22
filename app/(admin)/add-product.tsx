@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TextInput, Pressable, ScrollView, ActivityIndicator, Alert, Image, useWindowDimensions, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AdminTheme } from '@/constants/theme';
@@ -13,7 +13,8 @@ const CATEGORIES = ['Chair', 'Table', 'Bed', 'Sofa', 'Desk'];
 
 export default function AdminAddProductScreen() {
   const router = useRouter();
-  const { editId } = useLocalSearchParams<{ editId?: string }>();
+  const { id: editId } = useLocalSearchParams<{ id?: string }>();
+  const isEditMode = !!editId;
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   
@@ -25,47 +26,47 @@ export default function AdminAddProductScreen() {
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   
   const [imageUri, setImageUri] = useState<string | null>(null);
+  const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
   const [modelUri, setModelUri] = useState<string | null>(null);
+  const [existingModelUrl, setExistingModelUrl] = useState<string | null>(null);
   const [modelFileName, setModelFileName] = useState<string | null>(null);
   
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loadingProduct, setLoadingProduct] = useState(isEditMode);
   const [statusText, setStatusText] = useState('');
   const [isActive, setIsActive] = useState(false);
 
-  React.useEffect(() => {
-    if (editId) {
-      fetchProductForEdit();
-    }
-  }, [editId]);
-
-  const fetchProductForEdit = async () => {
-    try {
-      setStatusText('Loading product data...');
-      const { data, error } = await supabase
-        .from('products')
-        .select('*, categories(name)')
-        .eq('id', editId)
-        .single();
-        
-      if (error) throw error;
-      if (data) {
-        setName(data.name || '');
-        setDescription(data.description || '');
-        setPrice(data.price?.toString() || '');
-        setStock(data.stock?.toString() || '0');
-        if (data.categories?.name) setCategory(data.categories.name);
-        setImageUri(data.image_url);
-        setModelUri(data.model_url);
-        setIsActive(data.is_active || false);
+  // Load existing product when in edit mode
+  useEffect(() => {
+    if (!isEditMode) return;
+    const loadProduct = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('products')
+          .select('*, categories(name)')
+          .eq('id', editId)
+          .single();
+        if (error) throw error;
+        if (data) {
+          setName(data.name || '');
+          setDescription(data.description || '');
+          setPrice(String(data.price || ''));
+          setStock(String(data.stock || '10'));
+          setIsActive(data.is_active ?? false);
+          setExistingImageUrl(data.image_url || null);
+          setExistingModelUrl(data.model_url || null);
+          // Match category
+          const cat = data.categories?.name;
+          if (cat && CATEGORIES.includes(cat)) setCategory(cat);
+        }
+      } catch (err: any) {
+        Alert.alert('Error', 'Failed to load product: ' + err.message);
+      } finally {
+        setLoadingProduct(false);
       }
-    } catch (err: any) {
-      Alert.alert('Error', 'Failed to load product data');
-      console.error(err);
-    } finally {
-      setStatusText('');
-    }
-  };
-
+    };
+    loadProduct();
+  }, [editId]);
   const pickImage = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -148,7 +149,7 @@ export default function AdminAddProductScreen() {
   };
 
   const handleSave = async () => {
-    if (!name || !price || !imageUri) {
+    if (!name || !price || (!imageUri && !existingImageUrl)) {
       Alert.alert('Error', 'Please provide a name, price, and select an image.');
       return;
     }
@@ -156,13 +157,15 @@ export default function AdminAddProductScreen() {
     try {
       setIsSubmitting(true);
       
-      let finalImageUrl = imageUri;
-      if (imageUri && !imageUri.startsWith('http')) {
+      // 1. Upload new image if one was picked, otherwise keep existing
+      let finalImageUrl = existingImageUrl;
+      if (imageUri) {
         finalImageUrl = await uploadImageToSupabase(imageUri);
       }
       
-      let finalModelUrl = modelUri;
-      if (modelUri && !modelUri.startsWith('http')) {
+      // 2. Upload new GLB model if picked, otherwise keep existing
+      let finalModelUrl = existingModelUrl;
+      if (modelUri) {
         finalModelUrl = await uploadModelToSupabase(modelUri);
       }
       
@@ -170,7 +173,7 @@ export default function AdminAddProductScreen() {
 
       const { data: catData } = await supabase.from('categories').select('id').eq('name', category).single();
 
-      const productPayload = {
+      const payload = {
         name,
         description,
         price: parseFloat(price),
@@ -178,20 +181,27 @@ export default function AdminAddProductScreen() {
         image_url: finalImageUrl,
         model_url: finalModelUrl,
         category_id: catData?.id || null,
-        is_active: isActive
+        is_active: isActive,
       };
 
-      if (editId) {
-        const { error } = await supabase.from('products').update(productPayload).eq('id', editId);
+      if (isEditMode) {
+        // 3a. Update existing product
+        const { error } = await supabase.from('products').update(payload).eq('id', editId);
         if (error) throw error;
         Alert.alert('Success', 'Product updated successfully!');
       } else {
-        const { error } = await supabase.from('products').insert([productPayload]);
+        // 3b. Insert new product
+        const { error } = await supabase.from('products').insert([payload]);
         if (error) throw error;
         Alert.alert('Success', 'Product saved successfully!');
       }
-      
+
+      // Navigate back and refresh products list
       router.back();
+      // Force a small delay to ensure navigation completes before refresh
+      setTimeout(() => {
+        router.push('/(admin)/products');
+      }, 100);
       
     } catch (err: any) {
       Alert.alert('Error saving product', err.message);
@@ -206,10 +216,17 @@ export default function AdminAddProductScreen() {
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color={AdminTheme.primaryDark} />
-          <Text style={styles.headerTitle}>Back to Products</Text>
+          <Text style={styles.headerTitle}>
+            {isEditMode ? 'Edit Product' : 'Back to Products'}
+          </Text>
         </Pressable>
       </View>
 
+      {loadingProduct ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={AdminTheme.accent} />
+        </View>
+      ) : (
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={[styles.mainLayout, isDesktop ? styles.row : styles.col]}>
           
@@ -221,6 +238,8 @@ export default function AdminAddProductScreen() {
               <Pressable style={styles.uploadBox} onPress={pickImage}>
                 {imageUri ? (
                   <Image source={{ uri: imageUri }} style={styles.previewImage} resizeMode="cover" />
+                ) : existingImageUrl ? (
+                  <Image source={{ uri: existingImageUrl }} style={styles.previewImage} resizeMode="cover" />
                 ) : (
                   <View style={styles.uploadPlaceholder}>
                     <Ionicons name="cloud-upload-outline" size={48} color={AdminTheme.secondary} />
@@ -348,6 +367,15 @@ export default function AdminAddProductScreen() {
                     enableZoom={true}
                   />
                 </View>
+              ) : existingModelUrl ? (
+                <View style={{ flex: 1, width: '100%' }}>
+                  <Product3DViewer 
+                    modelPath={existingModelUrl}
+                    autoRotate={true}
+                    enablePan={true}
+                    enableZoom={true}
+                  />
+                </View>
               ) : (
                 <View style={styles.previewPlaceholder}>
                   <Ionicons name="cube-outline" size={64} color="#555" />
@@ -368,12 +396,13 @@ export default function AdminAddProductScreen() {
                 </Text>
               </Pressable>
               
-              {modelUri && (
+              {(modelUri || existingModelUrl) && (
                 <Pressable 
                   style={[styles.uploadGlbBtn, { backgroundColor: '#FADBD8', borderColor: '#EC7063', marginLeft: 8, flex: 0.4 }]} 
                   onPress={() => {
                     setModelUri(null);
                     setModelFileName(null);
+                    setExistingModelUrl(null);
                   }}
                 >
                   <Ionicons name="trash-outline" size={20} color="#C0392B" style={{ marginRight: 6 }} />
@@ -399,12 +428,13 @@ export default function AdminAddProductScreen() {
               <Ionicons name="save-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
             )}
             <Text style={styles.generateButtonText}>
-              {isSubmitting ? (editId ? 'Updating...' : 'Saving...') : (editId ? 'Update Product' : 'Save Product')}
+              {isSubmitting ? 'Saving...' : isEditMode ? 'Update Product' : 'Save Product'}
             </Text>
           </Pressable>
         </View>
 
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

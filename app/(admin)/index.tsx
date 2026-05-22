@@ -4,8 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { AdminTheme } from '@/constants/theme';
-import { useAdminAuth } from './_layout';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 
 // Interfaces
 interface Order {
@@ -52,10 +51,6 @@ export default function AdminOverviewScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [chartFilter, setChartFilter] = useState<'7d' | '30d' | '90d'>('90d');
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -74,6 +69,51 @@ export default function AdminOverviewScreen() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Refresh data when screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchData();
+    }, [])
+  );
+
+  // Set up real-time subscriptions for orders and products
+  useEffect(() => {
+    const ordersChannel = supabase
+      .channel(`orders-changes-${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+        },
+        () => fetchData()
+      )
+      .subscribe();
+
+    const productsChannel = supabase
+      .channel(`products-changes-${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'products',
+        },
+        () => fetchData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ordersChannel);
+      supabase.removeChannel(productsChannel);
+    };
+  }, []);
 
   // KPIs
   const totalRevenue = useMemo(() => orders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0), [orders]);

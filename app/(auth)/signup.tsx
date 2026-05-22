@@ -55,19 +55,9 @@ export default function SignUpScreen() {
       }
 
       if (data?.user) {
-        // Save username -> email mapping to the profiles table
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: data.user.id,
-            username: username.trim().toLowerCase(),
-            email: email.trim().toLowerCase(),
-          });
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError.message);
-          // Don't block the user — account was created, profile save failed silently
-        }
+        // Profile is created automatically via the handle_new_user database trigger.
+        // No client-side insert needed — avoids RLS issues when email confirmation
+        // is pending and the session isn't active yet.
       }
 
       // Account created — redirect to sign-in page

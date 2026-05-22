@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AdminTheme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 
 type Product = {
   id: string;
@@ -43,8 +43,34 @@ export default function AdminProductsScreen() {
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<'All' | 'Live' | 'Hidden' | 'No 3D Model'>('All');
 
+  // Refresh products when screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchProducts();
+    }, [])
+  );
+
+  // Set up real-time subscription for product changes
   useEffect(() => {
-    fetchProducts();
+    const channel = supabase
+      .channel(`products-changes-${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'products',
+        },
+        (payload) => {
+          // Refresh products list when any change occurs
+          fetchProducts();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const fetchProducts = async () => {
@@ -122,10 +148,6 @@ export default function AdminProductsScreen() {
             <Text style={styles.stockText}>Stock: {item.stock}</Text>
           </View>
           
-          <View style={[styles.statusBadge, { backgroundColor: item.is_active ? '#4CAF50' : '#7A6A5A' }]}>
-            <Text style={styles.badgeText}>{item.is_active ? 'LIVE' : 'HIDDEN'}</Text>
-          </View>
-          
           <View style={[styles.statusBadge, { backgroundColor: item.model_url ? '#C9A96E' : '#EAE4DC' }]}>
             <Text style={[styles.badgeText, { color: item.model_url ? '#FFF' : '#3B2A1A' }]}>
               {item.model_url ? '3D Ready' : 'No 3D'}
@@ -135,21 +157,27 @@ export default function AdminProductsScreen() {
       </View>
       
       <View style={styles.actionContainer}>
-        <Switch
-          value={item.is_active}
-          onValueChange={() => toggleProductActive(item)}
-          trackColor={{ false: '#7A6A5A', true: '#4CAF50' }}
-          thumbColor="#FFF"
-        />
-        <Pressable 
+        {/* Status label above the toggle */}
+        <View style={styles.toggleWrapper}>
+          <Text style={[styles.statusLabel, { color: item.is_active ? '#4CAF50' : '#7A6A5A' }]}>
+            {item.is_active ? 'Live' : 'Hidden'}
+          </Text>
+          <Switch
+            value={item.is_active}
+            onValueChange={() => toggleProductActive(item)}
+            trackColor={{ false: '#7A6A5A', true: '#4CAF50' }}
+            thumbColor="#FFF"
+          />
+        </View>
+        <Pressable
           style={styles.actionButton}
           onPress={() => router.push({ pathname: '/product/[id]', params: { id: item.id } })}
         >
           <Ionicons name="eye-outline" size={20} color={AdminTheme.primaryDark} />
         </Pressable>
-        <Pressable 
+        <Pressable
           style={styles.actionButton}
-          onPress={() => router.push({ pathname: '/(admin)/add-product', params: { editId: item.id } })}
+          onPress={() => router.push({ pathname: '/(admin)/add-product', params: { id: item.id } } as any)}
         >
           <Ionicons name="pencil" size={18} color={AdminTheme.primaryDark} />
         </Pressable>
@@ -390,10 +418,20 @@ const styles = StyleSheet.create({
   actionContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
-    marginLeft: 6,
+    gap: 8,
+    marginLeft: 8,
+  },
+  toggleWrapper: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  statusLabel: {
+    fontFamily: 'DMSans-Bold',
+    fontSize: 11,
   },
   actionButton: {
-    padding: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(43,31,20,0.06)',
   },
 });

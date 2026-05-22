@@ -6,44 +6,25 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('CRITICAL: Supabase URL or Anon Key is missing. Check your .env file and ensure it starts with EXPO_PUBLIC_.');
-} else {
-  // Validation for standard Supabase JWT format
-  const parts = supabaseAnonKey.split('.');
-  if (parts.length !== 3) {
-    console.warn(`⚠️ Supabase Anon Key format error: Expected 3 parts, found ${parts.length}. Your key in .env might be malformed.`);
-  }
-  
-  // Helpful debug info (obscured for security)
-  console.log(`Supabase initialized with URL: ${supabaseUrl.substring(0, 15)}...`);
-}
-
-// Custom storage wrapper to handle SSR (Server Side Rendering) and AsyncStorage correctly
+// Custom storage wrapper — handles web localStorage and native AsyncStorage
 const ExpoSqliteStorage = {
   getItem: (key: string) => {
     if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined') {
-        return localStorage.getItem(key);
-      }
+      if (typeof window !== 'undefined') return localStorage.getItem(key);
       return null;
     }
     return AsyncStorage.getItem(key);
   },
   setItem: (key: string, value: string) => {
     if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(key, value);
-      }
+      if (typeof window !== 'undefined') localStorage.setItem(key, value);
       return;
     }
     return AsyncStorage.setItem(key, value);
   },
   removeItem: (key: string) => {
     if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem(key);
-      }
+      if (typeof window !== 'undefined') localStorage.removeItem(key);
       return;
     }
     return AsyncStorage.removeItem(key);
@@ -58,3 +39,22 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
+
+/**
+ * Call this once at app startup.
+ * Supabase v2 doesn't expose a TOKEN_REFRESH_FAILED event — instead it
+ * fires SIGNED_OUT after a failed refresh. We listen for that and ensure
+ * any stale storage is cleared so the user lands on the login screen.
+ */
+export function setupAuthErrorHandler() {
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT') {
+      // Clear any persisted session keys so stale tokens don't linger
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        Object.keys(localStorage)
+          .filter((k) => k.startsWith('sb-'))
+          .forEach((k) => localStorage.removeItem(k));
+      }
+    }
+  });
+}
