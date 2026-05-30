@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, Pressable, ScrollView, ActivityIndicator, Alert, Image, useWindowDimensions, Switch } from 'react-native';
+import { View, Text, StyleSheet, TextInput, Pressable, ScrollView, ActivityIndicator, Alert, Image, useWindowDimensions, Switch, DeviceEventEmitter } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AdminTheme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import * as DocumentPicker from 'expo-document-picker';
-import { Product3DViewer } from '@/components/Product3DViewer';
 
-const CATEGORIES = ['Chair', 'Table', 'Bed', 'Sofa', 'Desk'];
+interface Category {
+  id: string;
+  name: string;
+}
 
 export default function AdminAddProductScreen() {
   const router = useRouter();
@@ -21,20 +22,59 @@ export default function AdminAddProductScreen() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
-  const [stock, setStock] = useState('10');
-  const [category, setCategory] = useState(CATEGORIES[0]);
-  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [stock, setStock] = useState('0');
+  const [category, setCategory] = useState('');
+  const [categoriesList, setCategoriesList] = useState<Category[]>([]);
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editCategoryName, setEditCategoryName] = useState('');
+  const [onSale, setOnSale] = useState(false);
+  const [discountPercentage, setDiscountPercentage] = useState('');
+  const [isBestSeller, setIsBestSeller] = useState(false);
   
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
-  const [modelUri, setModelUri] = useState<string | null>(null);
-  const [existingModelUrl, setExistingModelUrl] = useState<string | null>(null);
-  const [modelFileName, setModelFileName] = useState<string | null>(null);
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadingProduct, setLoadingProduct] = useState(isEditMode);
   const [statusText, setStatusText] = useState('');
   const [isActive, setIsActive] = useState(false);
+
+  // Reset form when navigating to Add Product page (focused and not in edit mode)
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!isEditMode) {
+        setName('');
+        setDescription('');
+        setPrice('');
+        setStock('0');
+        setCategory('');
+        setIsAddingCategory(false);
+        setNewCategoryName('');
+        setEditingCategoryId(null);
+        setOnSale(false);
+        setDiscountPercentage('');
+        setIsBestSeller(false);
+        setImageUri(null);
+        setExistingImageUrl(null);
+        setIsActive(false);
+      }
+    }, [isEditMode])
+  );
+
+  const fetchCategories = async () => {
+    try {
+      const { data, error } = await supabase.from('categories').select('*').order('name');
+      if (data && !error) setCategoriesList(data);
+    } catch (err) {
+      console.error('Error fetching categories:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
 
   // Load existing product when in edit mode
   useEffect(() => {
@@ -51,13 +91,15 @@ export default function AdminAddProductScreen() {
           setName(data.name || '');
           setDescription(data.description || '');
           setPrice(String(data.price || ''));
-          setStock(String(data.stock || '10'));
+          setStock(String(data.stock || '0'));
           setIsActive(data.is_active ?? false);
+          setOnSale(data.on_sale ?? false);
+          setDiscountPercentage(data.discount_percentage ? String(data.discount_percentage) : '');
+          setIsBestSeller(data.is_best_seller ?? false);
           setExistingImageUrl(data.image_url || null);
-          setExistingModelUrl(data.model_url || null);
           // Match category
           const cat = data.categories?.name;
-          if (cat && CATEGORIES.includes(cat)) setCategory(cat);
+          if (cat) setCategory(cat);
         }
       } catch (err: any) {
         Alert.alert('Error', 'Failed to load product: ' + err.message);
@@ -67,6 +109,39 @@ export default function AdminAddProductScreen() {
     };
     loadProduct();
   }, [editId]);
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim()) return;
+    try {
+      const { error } = await supabase.from('categories').insert([{ name: newCategoryName.trim() }]);
+      if (error) throw error;
+      setNewCategoryName('');
+      setIsAddingCategory(false);
+      await fetchCategories();
+    } catch (err: any) {
+      Alert.alert('Error', 'Failed to add category: ' + err.message);
+    }
+  };
+
+  const handleEditCategory = async (id: string) => {
+    if (!editCategoryName.trim()) {
+      setEditingCategoryId(null);
+      return;
+    }
+    try {
+      const { error } = await supabase.from('categories').update({ name: editCategoryName.trim() }).eq('id', id);
+      if (error) throw error;
+      // If the currently selected category was renamed, update the selection
+      const oldCat = categoriesList.find(c => c.id === id);
+      if (oldCat && oldCat.name === category) {
+        setCategory(editCategoryName.trim());
+      }
+      setEditingCategoryId(null);
+      await fetchCategories();
+    } catch (err: any) {
+      Alert.alert('Error', 'Failed to rename category: ' + err.message);
+    }
+  };
+
   const pickImage = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -77,28 +152,6 @@ export default function AdminAddProductScreen() {
 
     if (!result.canceled) {
       setImageUri(result.assets[0].uri);
-    }
-  };
-
-  const pickGlbFile = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
-        copyToCacheDirectory: true,
-      });
-
-      if (!result.canceled) {
-        const asset = result.assets[0];
-        if (asset.name.toLowerCase().endsWith('.glb')) {
-          setModelUri(asset.uri);
-          setModelFileName(asset.name);
-        } else {
-          Alert.alert('Invalid File', 'Please select a valid 3D model file ending in .glb');
-        }
-      }
-    } catch (err) {
-      console.error('Error picking document:', err);
-      Alert.alert('Error', 'Failed to pick 3D model file.');
     }
   };
 
@@ -125,29 +178,6 @@ export default function AdminAddProductScreen() {
     return publicUrlData.publicUrl;
   };
 
-  const uploadModelToSupabase = async (uri: string): Promise<string> => {
-    setStatusText('Uploading 3D model...');
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    const fileName = `model_${Date.now()}.glb`;
-
-    const { data, error } = await supabase.storage
-      .from('models')
-      .upload(fileName, blob, { contentType: 'model/gltf-binary' });
-
-    if (error) {
-      if (error.message.includes('bucket not found')) {
-        await supabase.storage.createBucket('models', { public: true });
-        const retry = await supabase.storage.from('models').upload(fileName, blob, { contentType: 'model/gltf-binary' });
-        if (retry.error) throw retry.error;
-      } else {
-        throw error;
-      }
-    }
-    const { data: publicUrlData } = supabase.storage.from('models').getPublicUrl(fileName);
-    return publicUrlData.publicUrl;
-  };
-
   const handleSave = async () => {
     if (!name || !price || (!imageUri && !existingImageUrl)) {
       Alert.alert('Error', 'Please provide a name, price, and select an image.');
@@ -163,12 +193,6 @@ export default function AdminAddProductScreen() {
         finalImageUrl = await uploadImageToSupabase(imageUri);
       }
       
-      // 2. Upload new GLB model if picked, otherwise keep existing
-      let finalModelUrl = existingModelUrl;
-      if (modelUri) {
-        finalModelUrl = await uploadModelToSupabase(modelUri);
-      }
-      
       setStatusText('Saving product to database...');
 
       const { data: catData } = await supabase.from('categories').select('id').eq('name', category).single();
@@ -176,34 +200,98 @@ export default function AdminAddProductScreen() {
       const payload = {
         name,
         description,
-        price: parseFloat(price),
-        stock: parseInt(stock, 10),
+        price: parseFloat(price.replace(/,/g, '')),
+        stock: parseInt(stock || '0', 10),
         image_url: finalImageUrl,
-        model_url: finalModelUrl,
         category_id: catData?.id || null,
         is_active: isActive,
+        on_sale: onSale,
+        discount_percentage: discountPercentage ? parseFloat(discountPercentage) : 0,
+        is_best_seller: isBestSeller, updated_at: new Date().toISOString(),
       };
 
+      console.log('[ADD_PRODUCT_SCREEN SAVE] Attempting to save payload:', payload);
+
+      let savedId: string | undefined = Array.isArray(editId) ? editId[0] : editId;
+      console.log('[ADD_PRODUCT_SCREEN SAVE] Mode:', isEditMode ? 'EDIT' : 'CREATE', 'savedId:', savedId);
+
       if (isEditMode) {
-        // 3a. Update existing product
-        const { error } = await supabase.from('products').update(payload).eq('id', editId);
-        if (error) throw error;
-        Alert.alert('Success', 'Product updated successfully!');
+        // 3a. Update existing product — use .select('id') to verify rows were actually updated
+        let { data: updatedRows, error } = await supabase
+          .from('products')
+          .update(payload)
+          .eq('id', savedId)
+          .select('id');
+        if (error && (error.code === 'PGRST204' || error.code === '42703' || error.message?.includes('discount_percentage'))) {
+          console.warn('[ADD_PRODUCT_SCREEN SAVE] Primary update failed, attempting fallback payload:', error);
+          const fallbackPayload = { ...payload };
+          delete (fallbackPayload as any).discount_percentage;
+          const retry = await supabase
+            .from('products')
+            .update(fallbackPayload)
+            .eq('id', savedId)
+            .select('id');
+          updatedRows = retry.data;
+          error = retry.error;
+        }
+        if (error) {
+          console.error('[ADD_PRODUCT_SCREEN SAVE ERROR]', error);
+          throw error;
+        }
+        // Verify at least 1 row was updated. If 0 rows affected, the update was silently blocked
+        // (e.g. by an RLS policy or a mismatched ID) — treat this as a real failure.
+        if (!updatedRows || updatedRows.length === 0) {
+          throw new Error('The product could not be updated. It may have been deleted, or you may not have permission to edit it.');
+        }
+        console.log('[ADD_PRODUCT_SCREEN SAVE] Update completed successfully! Rows affected:', updatedRows.length);
       } else {
         // 3b. Insert new product
-        const { error } = await supabase.from('products').insert([payload]);
-        if (error) throw error;
-        Alert.alert('Success', 'Product saved successfully!');
+        let { data, error } = await supabase.from('products').insert([payload]).select('id').single();
+        if (error && (error.code === 'PGRST204' || error.code === '42703' || error.message?.includes('discount_percentage'))) {
+          console.warn('[ADD_PRODUCT_SCREEN SAVE] Primary insert failed, attempting fallback payload:', error);
+          const fallbackPayload = { ...payload };
+          delete (fallbackPayload as any).discount_percentage;
+          const retry = await supabase.from('products').insert([fallbackPayload]).select('id').single();
+          data = retry.data;
+          error = retry.error;
+        }
+        if (error) {
+          console.error('[ADD_PRODUCT_SCREEN SAVE ERROR]', error);
+          throw error;
+        }
+        if (data) {
+          savedId = data.id;
+        }
+        console.log('[ADD_PRODUCT_SCREEN SAVE] Insert completed successfully! savedId:', savedId);
       }
 
-      // Navigate back and refresh products list
-      router.back();
-      // Force a small delay to ensure navigation completes before refresh
-      setTimeout(() => {
-        router.push('/(admin)/products');
-      }, 100);
+      // Cache the last edited product id for sorting
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        if (savedId) {
+          console.log('[ADD_PRODUCT_SCREEN ASYNCSTORAGE] Writing last_edited_product_id:', savedId);
+          await AsyncStorage.setItem('last_edited_product_id', savedId);
+        }
+      } catch (storageErr) {
+        console.warn('[ADD_PRODUCT_SCREEN ASYNCSTORAGE ERROR] Failed to cache last edited ID:', storageErr);
+      }
+      
+      const optimisticProductObj = {
+        id: savedId,
+        ...payload,
+        updated_at: new Date().toISOString(),
+      };
+      
+      // Broadcast the saved product directly to the Products screen
+      console.log('[ADD_PRODUCT_SCREEN SAVE] Emitting PRODUCT_SAVED event with optimistic object:', optimisticProductObj);
+      DeviceEventEmitter.emit('PRODUCT_SAVED', optimisticProductObj);
+
+      // Navigate back to the products list immediately
+      console.log('[ADD_PRODUCT_SCREEN SAVE] Navigating back to products screen');
+      router.replace('/(admin)/products');
       
     } catch (err: any) {
+      console.error('[ADD_PRODUCT_SCREEN SAVE CATCH ERROR]', err);
       Alert.alert('Error saving product', err.message);
     } finally {
       setIsSubmitting(false);
@@ -214,7 +302,7 @@ export default function AdminAddProductScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
+        <Pressable onPress={() => router.replace('/(admin)/products')} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color={AdminTheme.primaryDark} />
           <Text style={styles.headerTitle}>
             {isEditMode ? 'Edit Product' : 'Back to Products'}
@@ -227,213 +315,260 @@ export default function AdminAddProductScreen() {
           <ActivityIndicator size="large" color={AdminTheme.accent} />
         </View>
       ) : (
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={[styles.mainLayout, isDesktop ? styles.row : styles.col]}>
-          
-          {/* --- LEFT COLUMN --- */}
-          <View style={[styles.column, isDesktop && { paddingRight: 12 }]}>
-            <Text style={styles.sectionTitle}>Product Image</Text>
-            
-            <View style={styles.card}>
-              <Pressable style={styles.uploadBox} onPress={pickImage}>
-                {imageUri ? (
-                  <Image source={{ uri: imageUri }} style={styles.previewImage} resizeMode="cover" />
-                ) : existingImageUrl ? (
-                  <Image source={{ uri: existingImageUrl }} style={styles.previewImage} resizeMode="cover" />
-                ) : (
-                  <View style={styles.uploadPlaceholder}>
-                    <Ionicons name="cloud-upload-outline" size={48} color={AdminTheme.secondary} />
-                    <Text style={styles.uploadText}>Upload Product Image</Text>
-                    <Text style={styles.uploadSubtext}>JPG, PNG supported</Text>
-                  </View>
-                )}
-              </Pressable>
-              
-              {imageUri && (
-                <Pressable style={styles.changeImageBtn} onPress={pickImage}>
-                  <Text style={styles.changeImageText}>Change Image</Text>
-                </Pressable>
+      <View style={[styles.mainLayout, { flex: 1, padding: 24, flexDirection: isDesktop ? 'row' : 'column', gap: 24 }]}>
+        
+        {/* --- LEFT SIDE (Image) --- */}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.sectionTitle}>Product Image</Text>
+          <View style={[styles.card, { flex: 1, justifyContent: 'center' }]}>
+            <Pressable style={[styles.uploadBox, { aspectRatio: undefined, flex: 1, borderWidth: 0 }]} onPress={pickImage}>
+              {imageUri ? (
+                <Image source={{ uri: imageUri }} style={[styles.previewImage, { resizeMode: 'contain' }]} />
+              ) : existingImageUrl ? (
+                <Image source={{ uri: existingImageUrl }} style={[styles.previewImage, { resizeMode: 'contain' }]} />
+              ) : (
+                <View style={[styles.uploadPlaceholder, { height: '100%', width: '100%', justifyContent: 'center', borderWidth: 2, borderColor: AdminTheme.secondary, borderStyle: 'dashed', borderRadius: 16 }]}>
+                  <Ionicons name="cloud-upload-outline" size={48} color={AdminTheme.secondary} />
+                  <Text style={styles.uploadText}>Upload Product Image</Text>
+                  <Text style={styles.uploadSubtext}>JPG, PNG supported</Text>
+                </View>
               )}
+            </Pressable>
+            {imageUri && (
+              <Pressable style={[styles.changeImageBtn, { position: 'absolute', bottom: 20 }]} onPress={pickImage}>
+                <Text style={styles.changeImageText}>Change Image</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
 
-              <View style={styles.formSection}>
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Product Name</Text>
+        {/* --- RIGHT SIDE (Form Inputs) --- */}
+        <View style={{ flex: 1.5 }}>
+          <Text style={styles.sectionTitle}>Product Details</Text>
+          <View style={[styles.card, { flex: 1, justifyContent: 'space-between' }]}>
+            
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Product Name</Text>
+              <TextInput
+                style={styles.input}
+                value={name}
+                onChangeText={setName}
+                placeholder="e.g., Verona Velvet Sofa"
+                placeholderTextColor={AdminTheme.textMuted}
+              />
+            </View>
+
+            <View style={styles.formRow}>
+              <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                <Text style={styles.label}>Price</Text>
+                <View style={styles.priceInputContainer}>
+                  <Text style={styles.currencySymbol}>₱</Text>
                   <TextInput
-                    style={styles.input}
-                    value={name}
-                    onChangeText={setName}
-                    placeholder="e.g., Verona Velvet Sofa"
+                    style={styles.priceInput}
+                    value={price}
+                    onChangeText={setPrice}
+                    keyboardType="decimal-pad"
+                    placeholder="0.00"
                     placeholderTextColor={AdminTheme.textMuted}
-                  />
-                </View>
-
-                <View style={styles.formRow}>
-                  <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                    <Text style={styles.label}>Price</Text>
-                    <View style={styles.priceInputContainer}>
-                      <Text style={styles.currencySymbol}>₱</Text>
-                      <TextInput
-                        style={styles.priceInput}
-                        value={price}
-                        onChangeText={setPrice}
-                        keyboardType="decimal-pad"
-                        placeholder="0.00"
-                        placeholderTextColor={AdminTheme.textMuted}
-                      />
-                    </View>
-                  </View>
-                  <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
-                    <Text style={styles.label}>Stock</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={stock}
-                      onChangeText={setStock}
-                      keyboardType="number-pad"
-                      placeholder="10"
-                      placeholderTextColor={AdminTheme.textMuted}
-                    />
-                  </View>
-                </View>
-
-                <View style={[styles.formGroup, { zIndex: 50, elevation: 50 }]}>
-                  <Text style={styles.label}>Category</Text>
-                  <View style={styles.dropdownContainer}>
-                    <Pressable 
-                      style={styles.dropdownHeader} 
-                      onPress={() => setShowCategoryDropdown(!showCategoryDropdown)}
-                    >
-                      <Text style={styles.dropdownHeaderText}>{category}</Text>
-                      <Ionicons name="chevron-down" size={20} color={AdminTheme.primaryDark} />
-                    </Pressable>
-                    {showCategoryDropdown && (
-                      <View style={styles.dropdownList}>
-                        {CATEGORIES.map((cat) => (
-                          <Pressable 
-                            key={cat} 
-                            style={styles.dropdownItem}
-                            onPress={() => {
-                              setCategory(cat);
-                              setShowCategoryDropdown(false);
-                            }}
-                          >
-                            <Text style={styles.dropdownItemText}>{cat}</Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-                </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Description</Text>
-                  <TextInput
-                    style={[styles.input, styles.textArea]}
-                    value={description}
-                    onChangeText={setDescription}
-                    placeholder="Describe the product details..."
-                    placeholderTextColor={AdminTheme.textMuted}
-                    multiline
-                    numberOfLines={4}
-                  />
-                </View>
-
-                <View style={styles.toggleContainer}>
-                  <View style={styles.toggleTextContainer}>
-                    <Text style={styles.toggleLabel}>Publish to Lumora App</Text>
-                    <Text style={styles.toggleSublabel}>Make this product visible to customers instantly upon saving</Text>
-                  </View>
-                  <Switch
-                    value={isActive}
-                    onValueChange={setIsActive}
-                    trackColor={{ false: '#7A6A5A', true: '#4CAF50' }}
-                    thumbColor="#FFF"
                   />
                 </View>
               </View>
+              <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
+                <Text style={styles.label}>Stock</Text>
+                <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 8 }]}>
+                  <Pressable 
+                    onPress={() => setStock(String(Math.max(0, parseInt(stock || '0') - 1)))}
+                    style={{ padding: 8, backgroundColor: '#F5F5F5', borderRadius: 6 }}
+                  >
+                    <Ionicons name="remove" size={16} color={AdminTheme.primaryDark} />
+                  </Pressable>
+                  <TextInput
+                    style={{ flex: 1, textAlign: 'center', fontFamily: 'DMSans-Regular', fontSize: 16, color: AdminTheme.textPrimary }}
+                    value={stock}
+                    onChangeText={(val) => {
+                      const num = parseInt(val);
+                      if (isNaN(num)) setStock('');
+                      else setStock(String(Math.max(0, num)));
+                    }}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor={AdminTheme.textMuted}
+                  />
+                  <Pressable 
+                    onPress={() => setStock(String(parseInt(stock || '0') + 1))}
+                    style={{ padding: 8, backgroundColor: '#F5F5F5', borderRadius: 6 }}
+                  >
+                    <Ionicons name="add" size={16} color={AdminTheme.primaryDark} />
+                  </Pressable>
+                </View>
+              </View>
             </View>
-          </View>
 
-          {/* --- RIGHT COLUMN --- */}
-          <View style={[styles.column, isDesktop && { paddingLeft: 12 }, !isDesktop && { marginTop: 24 }]}>
-            <Text style={styles.sectionTitle}>3D Model (Optional)</Text>
-            
-            <View style={[styles.previewBox]}>
-              {modelUri ? (
-                <View style={{ flex: 1, width: '100%' }}>
-                  <Product3DViewer 
-                    modelPath={modelUri}
-                    autoRotate={true}
-                    enablePan={true}
-                    enableZoom={true}
-                  />
+            <View style={[styles.formRow, { zIndex: 50, elevation: 50 }]}>
+              <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                <Text style={styles.label}>Category</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {categoriesList.map((cat) => (
+                    <View key={cat.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      {editingCategoryId === cat.id ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 20, borderWidth: 1, borderColor: AdminTheme.primaryDark, overflow: 'hidden' }}>
+                          <TextInput
+                            style={{ fontFamily: 'DMSans-Regular', fontSize: 14, color: AdminTheme.textPrimary, paddingVertical: 6, paddingLeft: 12, paddingRight: 6, minWidth: 100, outlineStyle: 'none' as any }}
+                            value={editCategoryName}
+                            onChangeText={setEditCategoryName}
+                            autoFocus
+                            autoComplete="off"
+                            autoCorrect={false}
+                            spellCheck={false}
+                            onSubmitEditing={() => handleEditCategory(cat.id)}
+                          />
+                          <Pressable 
+                            onPress={() => handleEditCategory(cat.id)}
+                            style={{ padding: 8, backgroundColor: AdminTheme.primaryDark, justifyContent: 'center', alignItems: 'center' }}
+                          >
+                            <Ionicons name="checkmark" size={16} color="#FFF" />
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <Pressable 
+                          style={{ 
+                            paddingVertical: 8, 
+                            paddingHorizontal: 14, 
+                            backgroundColor: category === cat.name ? AdminTheme.primaryDark : '#FFF', 
+                            borderRadius: 20,
+                            borderWidth: 1,
+                            borderColor: category === cat.name ? AdminTheme.primaryDark : '#DDD',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                          }}
+                          onPress={() => setCategory(cat.name)}
+                        >
+                          <Text style={{ 
+                            fontFamily: 'DMSans-Regular', 
+                            fontSize: 14, 
+                            color: category === cat.name ? '#FFF' : AdminTheme.textPrimary,
+                            marginRight: 6
+                          }}>
+                            {cat.name}
+                          </Text>
+                          <Pressable onPress={(e) => { e.stopPropagation(); setEditingCategoryId(cat.id); setEditCategoryName(cat.name); }}>
+                            <Ionicons name="pencil" size={14} color={category === cat.name ? '#FFF' : AdminTheme.textMuted} />
+                          </Pressable>
+                        </Pressable>
+                      )}
+                    </View>
+                  ))}
+                  
+                  {isAddingCategory ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 20, borderWidth: 1, borderColor: AdminTheme.primaryDark, overflow: 'hidden' }}>
+                      <TextInput
+                        style={{ fontFamily: 'DMSans-Regular', fontSize: 14, color: AdminTheme.textPrimary, paddingVertical: 6, paddingLeft: 12, paddingRight: 6, minWidth: 100, outlineStyle: 'none' as any }}
+                        value={newCategoryName}
+                        onChangeText={setNewCategoryName}
+                        placeholder="New category..."
+                        autoFocus
+                        autoComplete="off"
+                        autoCorrect={false}
+                        spellCheck={false}
+                        onSubmitEditing={handleAddCategory}
+                      />
+                      <Pressable 
+                        onPress={() => { if (!newCategoryName) setIsAddingCategory(false); else handleAddCategory(); }}
+                        style={{ padding: 8, backgroundColor: AdminTheme.primaryDark, justifyContent: 'center', alignItems: 'center' }}
+                      >
+                        <Ionicons name="checkmark" size={16} color="#FFF" />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable 
+                      style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#EAE4DC', borderRadius: 20, flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => setIsAddingCategory(true)}
+                    >
+                      <Ionicons name="add" size={16} color={AdminTheme.primaryDark} style={{ marginRight: 4 }} />
+                      <Text style={{ fontFamily: 'DMSans-Regular', fontSize: 14, color: AdminTheme.primaryDark }}>Add</Text>
+                    </Pressable>
+                  )}
                 </View>
-              ) : existingModelUrl ? (
-                <View style={{ flex: 1, width: '100%' }}>
-                  <Product3DViewer 
-                    modelPath={existingModelUrl}
-                    autoRotate={true}
-                    enablePan={true}
-                    enableZoom={true}
-                  />
-                </View>
-              ) : (
-                <View style={styles.previewPlaceholder}>
-                  <Ionicons name="cube-outline" size={64} color="#555" />
-                  <Text style={styles.previewText}>No 3D model yet — you can add one later</Text>
+              </View>
+
+              {onSale && (
+                <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
+                  <Text style={styles.label}>Discount Percentage</Text>
+                  <View style={[styles.priceInputContainer, { width: '100%' }]}>
+                    <TextInput
+                      style={[styles.priceInput, { color: '#DC2626', fontFamily: 'DMSans-Bold' }]}
+                      value={discountPercentage}
+                      onChangeText={setDiscountPercentage}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={AdminTheme.textMuted}
+                    />
+                    <Text style={[styles.currencySymbol, { marginLeft: 4, marginRight: 0 }]}>%</Text>
+                  </View>
+                  <Text style={{ marginTop: 8, fontFamily: 'DMSans-Bold', color: '#DC2626', fontSize: 15 }}>
+                    Sale Price: ₱{(parseFloat((price || '0').replace(/,/g, '')) * (1 - (parseFloat(discountPercentage || '0') / 100))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </Text>
                 </View>
               )}
             </View>
 
-            <View style={styles.statusContainer}>
-              <Text style={styles.statusText}>{statusText}</Text>
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Description</Text>
+              <TextInput
+                style={[styles.input, styles.textArea, { height: 60 }]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Describe the product details..."
+                placeholderTextColor={AdminTheme.textMuted}
+                multiline
+                numberOfLines={2}
+              />
             </View>
 
-            <View style={styles.uploadBtnContainer}>
-              <Pressable style={styles.uploadGlbBtn} onPress={pickGlbFile}>
-                <Ionicons name="document-attach-outline" size={20} color={AdminTheme.primaryDark} style={{ marginRight: 6 }} />
-                <Text style={styles.uploadGlbText}>
-                  {modelUri ? 'Change .glb File' : 'Upload 3D Model (.glb)'}
+            <View style={[styles.formRow, { marginBottom: 16 }]}>
+              <View style={[styles.toggleContainer, { flex: 1, marginTop: 0, marginRight: 8, padding: 12 }]}>
+                <View style={styles.toggleTextContainer}>
+                  <Text style={styles.toggleLabel}>On Sale</Text>
+                </View>
+                <Switch value={onSale} onValueChange={setOnSale} trackColor={{ false: '#7A6A5A', true: '#4CAF50' }} thumbColor="#FFF" />
+              </View>
+              <View style={[styles.toggleContainer, { flex: 1, marginTop: 0, marginLeft: 8, padding: 12 }]}>
+                <View style={styles.toggleTextContainer}>
+                  <Text style={styles.toggleLabel}>Best Seller</Text>
+                </View>
+                <Switch value={isBestSeller} onValueChange={setIsBestSeller} trackColor={{ false: '#7A6A5A', true: '#4CAF50' }} thumbColor="#FFF" />
+              </View>
+            </View>
+
+            <View style={[styles.toggleContainer, { padding: 12, marginTop: 0, marginBottom: 24 }]}>
+              <View style={styles.toggleTextContainer}>
+                <Text style={styles.toggleLabel}>Publish to Lumora App</Text>
+                <Text style={styles.toggleSublabel}>Make this product visible instantly</Text>
+              </View>
+              <Switch value={isActive} onValueChange={setIsActive} trackColor={{ false: '#7A6A5A', true: '#4CAF50' }} thumbColor="#FFF" />
+            </View>
+            
+            <View style={[{ alignItems: 'center' }]}>
+              <Pressable 
+                style={[styles.generateButton, { paddingVertical: 14, width: '100%', maxWidth: '100%' }, isSubmitting && styles.generateButtonDisabled]} 
+                onPress={handleSave}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <Ionicons name="save-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
+                )}
+                <Text style={styles.generateButtonText}>
+                  {isSubmitting ? 'Saving...' : isEditMode ? 'Update Product' : 'Save Product'}
                 </Text>
               </Pressable>
-              
-              {(modelUri || existingModelUrl) && (
-                <Pressable 
-                  style={[styles.uploadGlbBtn, { backgroundColor: '#FADBD8', borderColor: '#EC7063', marginLeft: 8, flex: 0.4 }]} 
-                  onPress={() => {
-                    setModelUri(null);
-                    setModelFileName(null);
-                    setExistingModelUrl(null);
-                  }}
-                >
-                  <Ionicons name="trash-outline" size={20} color="#C0392B" style={{ marginRight: 6 }} />
-                  <Text style={[styles.uploadGlbText, { color: '#C0392B' }]}>Remove</Text>
-                </Pressable>
-              )}
             </View>
-            <Text style={styles.supportedFormatsText}>Supported format: .glb</Text>
+
           </View>
-          
         </View>
 
-        {/* --- BOTTOM --- */}
-        <View style={styles.bottomSection}>
-          <Pressable 
-            style={[styles.generateButton, isSubmitting && styles.generateButtonDisabled]} 
-            onPress={handleSave}
-            disabled={isSubmitting}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color="#FFF" />
-            ) : (
-              <Ionicons name="save-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
-            )}
-            <Text style={styles.generateButtonText}>
-              {isSubmitting ? 'Saving...' : isEditMode ? 'Update Product' : 'Save Product'}
-            </Text>
-          </Pressable>
-        </View>
-
-      </ScrollView>
+      </View>
       )}
     </SafeAreaView>
   );

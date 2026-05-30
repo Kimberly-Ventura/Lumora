@@ -103,33 +103,7 @@ export default function AdminSettingsScreen() {
     }
   };
 
-  const handleClearOrders = () => {
-    const confirmMessage = "Are you sure you want to clear ALL orders? This cannot be undone.";
-    
-    if (Platform.OS === 'web') {
-      if (window.confirm(confirmMessage)) {
-        clearOrders();
-      }
-    } else {
-      Alert.alert('Danger Zone', confirmMessage, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Clear All', style: 'destructive', onPress: clearOrders },
-      ]);
-    }
-  };
 
-  const clearOrders = async () => {
-    try {
-      // Due to RLS or constraints, we just call delete. Since there's no FK constraint, we should delete both independently.
-      await supabase.from('order_items').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('orders').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      
-      if (Platform.OS === 'web') window.alert('All orders have been cleared.');
-      else Alert.alert('Success', 'All orders have been cleared.');
-    } catch (err) {
-      console.error('Error clearing orders', err);
-    }
-  };
 
   const CustomToggle = ({ value, onValueChange }: { value: boolean, onValueChange: (v: boolean) => void }) => (
     <Pressable 
@@ -267,29 +241,7 @@ export default function AdminSettingsScreen() {
             </View>
           </View>
 
-          {/* 3. Security */}
-          <View style={[styles.card, isMobile && styles.cardMobile]}>
-            <Text style={styles.sectionTitle}>SECURITY</Text>
-
-            <View style={styles.rowItem}>
-              <Text style={styles.rowLabel}>Session auto lock</Text>
-              <CustomToggle value={settings.auto_lock} onValueChange={(v) => updateSetting('auto_lock', v)} />
-            </View>
-
-            {settings.auto_lock && (
-              <View style={styles.rowItem}>
-                <Text style={styles.rowLabel}>Lock after (minutes)</Text>
-                <TextInput
-                  style={[styles.input, { width: 80, textAlign: 'right' }]}
-                  keyboardType="numeric"
-                  value={settings.auto_lock_minutes}
-                  onChangeText={(v) => updateSetting('auto_lock_minutes', v)}
-                />
-              </View>
-            )}
-          </View>
-
-          {/* 4. Notifications & Danger Zone */}
+          {/* 3. Notifications */}
           <View style={[styles.card, isMobile && styles.cardMobile]}>
             <Text style={styles.sectionTitle}>NOTIFICATIONS</Text>
             
@@ -306,15 +258,6 @@ export default function AdminSettingsScreen() {
             <View style={styles.rowItem}>
               <Text style={styles.rowLabel}>Customer signup</Text>
               <CustomToggle value={settings.notify_new_customer} onValueChange={(v) => updateSetting('notify_new_customer', v)} />
-            </View>
-
-            <View style={styles.divider} />
-            
-            <Text style={styles.sectionTitle}>DANGER ZONE</Text>
-            <View style={{ alignItems: 'flex-start' }}>
-              <Pressable style={styles.dangerBtn} onPress={handleClearOrders}>
-                <Text style={styles.dangerBtnText}>Clear all orders</Text>
-              </Pressable>
             </View>
           </View>
 
@@ -497,18 +440,7 @@ const styles = StyleSheet.create({
     transform: [{ translateX: 20 }],
   },
 
-  dangerBtn: {
-    borderWidth: 1,
-    borderColor: '#B71C1C',
-    borderRadius: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  dangerBtnText: {
-    fontFamily: 'Inter-SemiBold',
-    fontSize: 13,
-    color: '#B71C1C',
-  },
+
 
   // Footer
   footer: {

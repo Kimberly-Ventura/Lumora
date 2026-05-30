@@ -21,7 +21,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
   const addToast = useCallback((notification: Omit<ToastNotification, 'id'>) => {
-    const id = Date.now().toString();
+    const id = Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
     const newToast: ToastNotification = {
       ...notification,
       id,

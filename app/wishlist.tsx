@@ -52,14 +52,7 @@ export default function WishlistScreen() {
         ]}
       >
         <View style={[styles.innerContent, { width: contentWidth }]}>
-          {/* Header titles */}
-          <View style={styles.headerBlock}>
-            <ThemedText style={styles.subtitle}>YOUR PERSONAL SAVES</ThemedText>
-            <ThemedText style={styles.title}>My Wishlist</ThemedText>
-            <ThemedText style={styles.description}>
-              Keep track of the designs that inspire you. Review, add to bag, or share your curation.
-            </ThemedText>
-          </View>
+
 
           {/* List items */}
           {items.length === 0 ? (
@@ -73,7 +66,7 @@ export default function WishlistScreen() {
               </ThemedText>
               <Pressable 
                 style={styles.exploreBtn}
-                onPress={() => router.push('/(tabs)')}
+                onPress={() => router.push('/(tabs)/explore')}
               >
                 <ThemedText style={styles.exploreBtnText}>Explore Collection</ThemedText>
               </Pressable>

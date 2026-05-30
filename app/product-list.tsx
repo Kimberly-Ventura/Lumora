@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,7 +6,6 @@ import {
   Image,
   Pressable,
   TextInput,
-  ActivityIndicator,
 } from 'react-native';
 import { BottomTabBar } from '@/components/BottomTabBar';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
@@ -14,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getWishlist, addToWishlist, removeFromWishlist } from '@/lib/wishlistHelper';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Skeleton } from '@/components/Skeleton';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
@@ -34,14 +34,23 @@ const CATEGORY_COLORS: Record<string, string> = {
   'new arrival': '#5A8D73',
 };
 
+// Maps rooms to their appropriate furniture categories
+const ROOM_CATEGORY_MAP: Record<string, string[]> = {
+  'office': ['Chair', 'Table', 'Lamp', 'Desk'],
+  'living room': ['Sofa', 'Chair', 'Lamp', 'Table'],
+  'bedroom': ['Bed', 'Lamp', 'Table', 'Chair'],
+  'dining room': ['Table'],
+  'dining': ['Table'],
+};
+
 export default function ProductListScreen() {
   const router = useRouter();
   const { filter, category, room, search } = useLocalSearchParams<{ filter?: string; category?: string; room?: string; search?: string }>();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const [searchQuery, setSearchQuery] = useState(search || '');
-  const [activeChip, setActiveChip] = useState('All');
-  const chipOptions = ['All', 'Chair', 'Table', 'Sofa', 'Lamp', 'Bed'];
+  const currentCategory = category || 'All';
+  const [chipOptions, setChipOptions] = useState<string[]>(['All', 'Chair', 'Table', 'Sofa', 'Lamp', 'Bed']);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,8 +62,59 @@ export default function ProductListScreen() {
     }, [])
   );
 
-  const fetchProducts = async () => {
-    setLoading(true);
+  const fetchCategories = async () => {
+    try {
+      const { data, error } = await supabase.from('categories').select('name');
+      if (data && !error) {
+        const names = data.map((c: any) => c.name);
+        let uniqueNames = Array.from(new Set(names)) as string[];
+        
+        // If viewing a room collection, only show chips relevant to that room
+        if (room && ROOM_CATEGORY_MAP[room]) {
+          const allowed = ROOM_CATEGORY_MAP[room].map(c => c.toLowerCase());
+          uniqueNames = uniqueNames.filter(n => allowed.includes(n.toLowerCase()));
+        }
+        
+        setChipOptions(['All', ...uniqueNames]);
+      }
+    } catch (err) {
+      console.error('Error fetching categories in product-list:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCategories();
+    const catChannel = supabase
+      .channel(`list-categories-changes-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => {
+        fetchCategories();
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(catChannel);
+    };
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`list-products-changes-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        fetchProducts(true);
+      })
+      .subscribe();
+      
+    const interval = setInterval(() => {
+      fetchProducts(true); // Silent fetch
+    }, 5000);
+      
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
+  }, [category, filter, search]);
+
+  const fetchProducts = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       let query = supabase
         .from('products')
@@ -63,8 +123,15 @@ export default function ProductListScreen() {
         .order('created_at', { ascending: false });
 
       // Server-side category filter
-      if (category && category.toLowerCase() !== 'new arrival') {
+      if (category && category.toLowerCase() !== 'new arrival' && category.toLowerCase() !== 'all') {
         query = query.ilike('categories.name', category);
+      }
+
+      // Handle the promo filters
+      if (filter === 'flash') {
+        query = query.eq('on_sale', true);
+      } else if (filter === 'bestseller') {
+        query = query.eq('is_best_seller', true);
       }
 
       const { data, error } = await query;
@@ -72,22 +139,29 @@ export default function ProductListScreen() {
         console.error('product-list fetch error:', error.message);
         setProducts([]);
       } else {
-        const mapped = (data ?? []).map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          brand: item.categories?.name || 'Lumora Design',
-          price: `₱${parseFloat(item.price).toLocaleString('en-US')}`,
-          image: item.image_url ? { uri: item.image_url } : require('@/assets/images/armchair_clean.png'),
-          category: item.categories?.name || '',
-          tag: '',          // DB products don't have tags yet
-          discount: null,
-          originalPrice: null,
-          rooms: [] as string[],
-        }));
+        const mapped = (data ?? []).map((item: any) => {
+          const isOnSale = item.on_sale && item.discount_percentage && item.discount_percentage > 0;
+          return {
+            id: item.id,
+            name: item.name,
+            brand: item.categories?.name || 'Lumora Design',
+            price: `₱${parseFloat(item.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            image: item.image_url ? { uri: item.image_url } : require('@/assets/images/armchair_clean.png'),
+            category: item.categories?.name || '',
+            tag: item.is_best_seller ? 'Best Seller' : (isOnSale ? `${item.discount_percentage}% OFF` : ''),
+            discount: isOnSale ? `${item.discount_percentage}% OFF` : null,
+            originalPrice: isOnSale ? `₱${parseFloat(item.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+            onSale: isOnSale,
+            salePrice: isOnSale ? `₱${(parseFloat(item.price) * (1 - item.discount_percentage / 100)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+            isBestSeller: item.is_best_seller,
+            stock: item.stock !== undefined ? item.stock : 15,
+            rooms: [] as string[],
+          };
+        });
         setProducts(mapped);
       }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -138,12 +212,59 @@ export default function ProductListScreen() {
     }
     
     // Quick chips filter
-    if (activeChip !== 'All') {
-      if (p.category.toLowerCase() !== activeChip.toLowerCase()) return false;
+    if (currentCategory !== 'All') {
+      if (p.category.toLowerCase() !== currentCategory.toLowerCase()) return false;
+    }
+    
+    // Room filter
+    if (room) {
+      const roomKey = room.toLowerCase().trim();
+      const mappedCategories = ROOM_CATEGORY_MAP[roomKey];
+      
+      if (mappedCategories) {
+        const allowedCategories = mappedCategories.map(c => c.toLowerCase());
+        if (!p.category || !allowedCategories.includes(p.category.toLowerCase())) {
+          return false;
+        }
+        
+        // Explicit keyword exclusions to refine room matching
+        const pName = p.name.toLowerCase();
+        
+        if (roomKey === 'office') {
+          if (pName.includes('dining') || pName.includes('kitchen') || pName.includes('coffee') || pName.includes('bed') || pName.includes('nightstand')) return false;
+        }
+        if (roomKey === 'dining room' || roomKey === 'dining') {
+          if (pName.includes('office') || pName.includes('desk') || pName.includes('coffee') || pName.includes('bed') || pName.includes('nightstand') || pName.includes('stool') || pName.includes('chair')) return false;
+        }
+        if (roomKey === 'living room') {
+          if (pName.includes('dining') || pName.includes('desk') || pName.includes('office') || pName.includes('bed') || pName.includes('nightstand')) return false;
+        }
+        if (roomKey === 'bedroom') {
+          if (pName.includes('dining') || pName.includes('desk') || pName.includes('office') || pName.includes('coffee') || pName.includes('sofa') || pName.includes('kitchen')) return false;
+        }
+      }
     }
     
     return true;
   });
+
+  const sortedFiltered = React.useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const getStockRank = (stock: number) => {
+        if (stock === 0) return 2;
+        if (stock < 10) return 1;
+        return 0;
+      };
+      
+      const rankA = getStockRank(a.stock !== undefined ? a.stock : 15);
+      const rankB = getStockRank(b.stock !== undefined ? b.stock : 15);
+      
+      if (rankA !== rankB) {
+        return rankB - rankA;
+      }
+      return 0;
+    });
+  }, [filtered]);
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -184,11 +305,11 @@ export default function ProductListScreen() {
         {/* Category Chips */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsContainer}>
           {chipOptions.map(chip => {
-            const isActive = activeChip === chip;
+            const isActive = currentCategory.toLowerCase() === chip.toLowerCase();
             return (
               <Pressable 
                 key={chip} 
-                onPress={() => setActiveChip(chip)} 
+                onPress={() => router.setParams({ category: chip })} 
                 style={[styles.chip, isActive && styles.chipActive]}
               >
                 <ThemedText style={[styles.chipText, isActive && styles.chipTextActive]}>{chip}</ThemedText>
@@ -202,26 +323,39 @@ export default function ProductListScreen() {
       {!loading && (
         <View style={styles.countRow}>
           <ThemedText style={styles.countText}>
-            {filtered.length} item{filtered.length !== 1 ? 's' : ''}
+            {sortedFiltered.length} item{sortedFiltered.length !== 1 ? 's' : ''}
             {searchQuery.trim() ? ` for "${searchQuery}"` : ''}
           </ThemedText>
         </View>
       )}
 
       {loading ? (
-        <View style={styles.loadingState}>
-          <ActivityIndicator size="large" color="#A06E50" />
-        </View>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+          <View style={styles.grid}>
+            {[1, 2, 3, 4, 5, 6].map(key => (
+              <View key={`skeleton-${key}`} style={styles.card}>
+                <View style={styles.imageContainer}>
+                  <Skeleton width="100%" height="100%" />
+                </View>
+                <View style={styles.details}>
+                  <Skeleton width={60} height={12} style={{ marginBottom: 6 }} />
+                  <Skeleton width="90%" height={16} style={{ marginBottom: 10 }} />
+                  <Skeleton width={80} height={18} />
+                </View>
+              </View>
+            ))}
+          </View>
+        </ScrollView>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-          {filtered.length === 0 ? (
+          {sortedFiltered.length === 0 ? (
             <View style={styles.emptyState}>
               <Ionicons name="cube-outline" size={48} color="#CCC" />
               <ThemedText style={styles.emptyText}>No products found</ThemedText>
             </View>
           ) : (
             <View style={styles.grid}>
-              {filtered.map(product => (
+              {sortedFiltered.map(product => (
                 <Pressable
                   key={product.id}
                   style={styles.card}
@@ -229,6 +363,25 @@ export default function ProductListScreen() {
                 >
                   <View style={styles.imageContainer}>
                     <Image source={product.image} style={styles.image} resizeMode="cover" />
+                    
+                    {product.stock === 0 ? (
+                      <View style={[styles.tag, { backgroundColor: '#FFE4E6', borderColor: '#FECDD3', borderWidth: 1, borderRadius: 4, top: 8, left: 8 }]}>
+                        <ThemedText style={[styles.tagText, { color: '#9F1239', fontWeight: 'bold' }]}>OUT OF STOCK</ThemedText>
+                      </View>
+                    ) : product.stock < 10 ? (
+                      <View style={[styles.tag, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1, borderRadius: 4, top: 8, left: 8 }]}>
+                        <ThemedText style={[styles.tagText, { color: '#92400E', fontWeight: 'bold' }]}>LOW STOCK: {product.stock}</ThemedText>
+                      </View>
+                    ) : product.onSale ? (
+                      <View style={[styles.tag, { backgroundColor: '#FEE2E2', borderColor: '#FCA5A5', borderWidth: 1, borderRadius: 4, top: 8, left: 8 }]}>
+                        <ThemedText style={[styles.tagText, { color: '#DC2626', fontWeight: 'bold' }]}>{product.discount || 'SALE'}</ThemedText>
+                      </View>
+                    ) : product.isBestSeller ? (
+                      <View style={[styles.tag, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1, borderRadius: 4, top: 8, left: 8 }]}>
+                        <ThemedText style={[styles.tagText, { color: '#D97706', fontWeight: 'bold' }]}>BEST SELLER</ThemedText>
+                      </View>
+                    ) : null}
+
                     <Pressable style={styles.favBtn} onPress={() => toggleFavorite(product)}>
                       <Ionicons
                         name={favorites.includes(product.id) ? 'heart' : 'heart-outline'}
@@ -241,7 +394,14 @@ export default function ProductListScreen() {
                     <ThemedText style={styles.brand}>{product.brand}</ThemedText>
                     <ThemedText style={styles.name} numberOfLines={2}>{product.name}</ThemedText>
                     <View style={styles.priceRow}>
-                      <ThemedText style={styles.price}>{product.price}</ThemedText>
+                      {product.onSale ? (
+                         <>
+                           <ThemedText style={[styles.price, { color: '#DC2626' }]}>{product.salePrice}</ThemedText>
+                           <ThemedText style={styles.originalPrice}>{product.price}</ThemedText>
+                         </>
+                      ) : (
+                         <ThemedText style={styles.price}>{product.price}</ThemedText>
+                      )}
                     </View>
                   </View>
                 </Pressable>

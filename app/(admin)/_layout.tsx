@@ -3,18 +3,33 @@ import React, { useEffect, useState, createContext, useContext } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { AdminTheme } from '@/constants/theme';
 import {
-  Platform,
   View,
   Text,
   StyleSheet,
   Pressable,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import type { Session } from '@supabase/supabase-js';
 import { NotificationBell } from '@/components/NotificationBell';
 
-// ─── Auth Context ────────────────────────────────────────────────────────────
+// ─── Admin check ─────────────────────────────────────────────────────────────
+// A user is considered an admin if their Supabase user_metadata has is_admin: true
+// OR if their email matches the ADMIN_EMAIL constant below.
+// Set is_admin: true via Supabase Dashboard → Authentication → Users → Edit user → Raw User Meta Data
+// e.g.  { "is_admin": true }
+const ADMIN_EMAIL = 'admin@gmail.com'; // ← change this to your actual admin email
+
+function isAdminUser(session: Session | null): boolean {
+  if (!session?.user) return false;
+  const meta = session.user.user_metadata;
+  if (meta?.is_admin === true) return true;
+  if (session.user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return true;
+  return false;
+}
+
+// ─── Auth Context ─────────────────────────────────────────────────────────────
 
 const AdminSessionContext = createContext<Session | null>(null);
 
@@ -22,49 +37,43 @@ export function useAdminSession() {
   return useContext(AdminSessionContext);
 }
 
-// ─── Root layout export ──────────────────────────────────────────────────────
+// ─── Root layout export ───────────────────────────────────────────────────────
 
 export default function AdminLayout() {
   return <AdminRoot />;
 }
 
-// ─── AdminRoot: loads session, then decides what to render ───────────────────
+// ─── AdminRoot: loads session, then decides what to render ────────────────────
 
 function AdminRoot() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const router = useRouter();
-  const pathname = usePathname();
-
-  const isOnLoginScreen = pathname === '/(admin)/login';
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (error) {
-        supabase.auth.signOut();
-        setSession(null);
-      } else {
-        setSession(data.session);
-      }
-      setLoading(false);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, newSession) => {
-        if (event === 'SIGNED_OUT') {
+    let subscription: { unsubscribe: () => void } | null = null;
+      // Real Supabase auth flow
+      supabase.auth.getSession().then(({ data, error }) => {
+        if (error) {
+          supabase.auth.signOut();
           setSession(null);
-          setLoading(false);
         } else {
-          setSession(newSession);
-          setLoading(false);
+          setSession(data.session);
         }
-      }
-    );
+        setLoading(false);
+      });
 
-    return () => subscription.unsubscribe();
+      const { data } = supabase.auth.onAuthStateChange((_event, newSession) => {
+        setSession(newSession);
+        setLoading(false);
+      });
+      subscription = data.subscription;
+
+    return () => {
+      if (subscription) subscription.unsubscribe();
+    };
   }, []);
 
-  // ── Still checking session ──
+  // ── Loading spinner ──
   if (loading) {
     return (
       <View style={loadingStyles.container}>
@@ -73,38 +82,31 @@ function AdminRoot() {
     );
   }
 
-  // ── No session: show login standalone (no shell, no sidebar) ──
-  if (!session) {
-    return <AdminTabs session={null} />;
+  // ── Check admin privileges ──
+  // Even if there's a session (customer logged in), treat as unauthenticated
+  // unless the user is actually an admin.
+  const adminVerified = isAdminUser(session);
+
+  if (!adminVerified) {
+    // Show login screen with no shell, no sidebar
+    return (
+      <View style={{ flex: 1, backgroundColor: '#2B1F14' }}>
+        <AdminTabs isAdmin={false} />
+      </View>
+    );
   }
 
-  // ── Has session but somehow on login: redirect to dashboard ──
-  if (isOnLoginScreen) {
-    return <RedirectToDashboard />;
-  }
-
-  // ── Authenticated: full dashboard with shell ──
+  // ── Authenticated admin: full dashboard with shell ──
   return (
     <AdminSessionContext.Provider value={session}>
       <DashboardShell>
-        <AdminTabs session={session} />
+        <AdminTabs isAdmin={true} />
       </DashboardShell>
     </AdminSessionContext.Provider>
   );
 }
 
-// Redirects to dashboard after login
-function RedirectToDashboard() {
-  const router = useRouter();
-  useEffect(() => {
-    router.replace('/(admin)' as any);
-  }, []);
-  return (
-    <View style={loadingStyles.container}>
-      <ActivityIndicator size="large" color="#C9A96E" />
-    </View>
-  );
-}
+// ─── Loading styles ───────────────────────────────────────────────────────────
 
 const loadingStyles = StyleSheet.create({
   container: {
@@ -115,9 +117,11 @@ const loadingStyles = StyleSheet.create({
   },
 });
 
-// ─── Dashboard shell (sidebar + topbar) ─────────────────────────────────────
+import { useAutoLock } from '@/hooks/use-auto-lock';
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
+  useAutoLock();
+  
   return (
     <View style={styles.webContainer}>
       <WebSidebar />
@@ -147,10 +151,12 @@ function WebSidebar() {
     <View style={styles.sidebar}>
       <View style={styles.sidebarIcons}>
         {navItems.map((item) => {
+          const cleanRoute = item.route.replace('/(admin)', '');
           const isActive =
             pathname === item.route ||
+            (cleanRoute !== '' && pathname === cleanRoute) ||
             (item.route === '/(admin)' &&
-              (pathname === '/(admin)/index' || pathname === '/(admin)'));
+              (pathname === '/(admin)/index' || pathname === '/(admin)' || pathname === '/' || pathname === '/index' || pathname === ''));
           return (
             <Pressable
               key={item.route}
@@ -163,9 +169,7 @@ function WebSidebar() {
             >
               {({ hovered }: any) => (
                 <Ionicons
-                  name={
-                    (isActive ? item.icon : `${item.icon}-outline`) as any
-                  }
+                  name={(isActive ? item.icon : `${item.icon}-outline`) as any}
                   size={24}
                   color={isActive ? '#C9A96E' : hovered ? '#A69B8F' : '#7A6A5A'}
                 />
@@ -179,11 +183,11 @@ function WebSidebar() {
 }
 
 function WebTopBar() {
-  const router = useRouter();
-
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    router.replace('/(admin)/login' as any);
+    if (Platform.OS === 'web') {
+      window.location.reload(); 
+    }
   };
 
   return (
@@ -206,19 +210,25 @@ function WebTopBar() {
   );
 }
 
-// ─── Tabs navigator ──────────────────────────────────────────────────────────
+// ─── Tabs navigator ───────────────────────────────────────────────────────────
 
-function AdminTabs({ session }: { session: Session | null }) {
-  const isAuthenticated = !!session;
+function AdminTabs({ isAdmin }: { isAdmin: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // If not authenticated and not already on login, navigate there
+  // If not an admin and not already on login page, redirect to login
   useEffect(() => {
-    if (!isAuthenticated && pathname !== '/(admin)/login') {
+    if (!isAdmin && pathname !== '/(admin)/login') {
       router.replace('/(admin)/login' as any);
     }
-  }, [isAuthenticated, pathname]);
+  }, [isAdmin, pathname, router]);
+
+  // If verified admin and somehow on the login page, redirect to dashboard
+  useEffect(() => {
+    if (isAdmin && (pathname === '/(admin)/login' || pathname.endsWith('/login'))) {
+      router.replace('/(admin)' as any);
+    }
+  }, [isAdmin, pathname, router]);
 
   return (
     <Tabs
@@ -231,24 +241,26 @@ function AdminTabs({ session }: { session: Session | null }) {
         },
       }}
     >
+      {/* Login is always registered */}
       <Tabs.Screen
         name="login"
         options={{
-          href: isAuthenticated ? null : undefined,
+          href: isAdmin ? null : undefined,
           tabBarStyle: { display: 'none' },
         }}
       />
-      <Tabs.Screen name="index"       options={{ href: isAuthenticated ? undefined : null, title: 'Overview'  }} />
-      <Tabs.Screen name="orders"      options={{ href: isAuthenticated ? undefined : null, title: 'Orders'    }} />
-      <Tabs.Screen name="products"    options={{ href: isAuthenticated ? undefined : null, title: 'Products'  }} />
-      <Tabs.Screen name="customers"   options={{ href: isAuthenticated ? undefined : null, title: 'Customers' }} />
-      <Tabs.Screen name="settings"    options={{ href: isAuthenticated ? undefined : null, title: 'Settings'  }} />
+      <Tabs.Screen name="index"       options={{ href: isAdmin ? undefined : null, title: 'Overview'  }} />
+      <Tabs.Screen name="orders"      options={{ href: isAdmin ? undefined : null, title: 'Orders'    }} />
+      <Tabs.Screen name="products"    options={{ href: isAdmin ? undefined : null, title: 'Products'  }} />
+      <Tabs.Screen name="customers"   options={{ href: isAdmin ? undefined : null, title: 'Customers' }} />
+      <Tabs.Screen name="settings"    options={{ href: isAdmin ? undefined : null, title: 'Settings'  }} />
       <Tabs.Screen name="add-product" options={{ href: null }} />
+      <Tabs.Screen name="notifications" options={{ href: null }} />
     </Tabs>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   webContainer: {
@@ -292,6 +304,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 24,
+    zIndex: 10,
+    elevation: 10,
   },
   topBarTitle: {
     fontFamily: 'CormorantGaramond-Bold',

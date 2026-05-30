@@ -23,7 +23,7 @@ import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import { getWishlist, addToWishlist, removeFromWishlist } from '@/lib/wishlistHelper';
-import { Product3DViewer } from '@/components/Product3DViewer';
+import { Skeleton } from '@/components/Skeleton';
 
 const SHOWCASE_SWATCHES = [
   { name: 'Original Linen', hex: '#ORIGINAL', displayColor: '#E2DDD9' },
@@ -81,11 +81,6 @@ export default function HomeScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
-  const [isScrolled, setIsScrolled] = useState(false);
-  const [showcaseColor, setShowcaseColor] = useState<string>('#829FAD');
-  const [arModalVisible, setArModalVisible] = useState(false);
-  const [isArLocked, setIsArLocked] = useState(false);
-  const [snapshotTrigger, setSnapshotTrigger] = useState(0);
   const [user, setUser] = useState<any>(null);
   const [activeCategory, setActiveCategory] = useState('All');
   const [activeRoom, setActiveRoom] = useState('Office');
@@ -93,6 +88,9 @@ export default function HomeScreen() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const roomScrollRef = useRef<ScrollView>(null);
   const [activeRoomIndex, setActiveRoomIndex] = useState(0);
+  const [shopCategories, setShopCategories] = useState<any[]>(SHOP_CATEGORIES);
+  const [homeProducts, setHomeProducts] = useState<any[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
 
   const isMobile = currentWidth < 768;
   const roomWidth = isMobile ? currentWidth - 32 : 800;
@@ -146,6 +144,109 @@ export default function HomeScreen() {
     }
   };
 
+  const fetchCategories = async () => {
+    try {
+      const { data, error } = await supabase.from('categories').select('name');
+      if (data && !error) {
+        const names = data.map((c: any) => c.name);
+        const uniqueNames = Array.from(new Set(names)) as string[];
+        
+        const staticMap: Record<string, any> = {
+          'chair': require('@/assets/images/chair-category.png'),
+          'table': require('@/assets/images/dining-set-category.png'),
+          'lamp': require('@/assets/images/lamp-category.png'),
+          'sofa': require('@/assets/images/sofa-category.png'),
+          'bed': require('@/assets/images/bed-category.png'),
+        };
+
+        const mapped = [
+          { name: 'New arrival', text: 'NEW' },
+          ...uniqueNames.map(name => {
+            const key = name.toLowerCase();
+            if (staticMap[key]) {
+              return { name, icon: staticMap[key] };
+            } else {
+              const abbreviation = name.substring(0, 2).toUpperCase();
+              return { name, text: abbreviation };
+            }
+          })
+        ];
+        setShopCategories(mapped);
+      }
+    } catch (err) {
+      console.error('Error fetching categories in home:', err);
+    }
+  };
+
+  const fetchHomeProducts = async (silent = false) => {
+    if (!silent && homeProducts.length === 0) setIsLoadingProducts(true);
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*, categories(name)')
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+
+      if (data && !error) {
+        const mapped = data.map((item: any) => {
+          const isOnSale = item.on_sale && item.discount_percentage && item.discount_percentage > 0;
+          return {
+            id: item.id,
+            name: item.name,
+            brand: item.categories?.name || 'Lumora Design',
+            price: `₱${parseFloat(item.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            image: item.image_url ? { uri: item.image_url } : require('@/assets/images/armchair_clean.png'),
+            category: item.categories?.name || '',
+            tag: item.is_best_seller ? 'Best Seller' : (isOnSale ? `${item.discount_percentage}% OFF` : ''),
+            discount: isOnSale ? `${item.discount_percentage}% OFF` : null,
+            originalPrice: isOnSale ? `₱${parseFloat(item.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+            onSale: isOnSale,
+            salePrice: isOnSale ? `₱${(parseFloat(item.price) * (1 - item.discount_percentage / 100)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+            isBestSeller: item.is_best_seller,
+            rooms: [] as string[],
+          };
+        });
+        setHomeProducts(mapped);
+      }
+    } catch (err) {
+      console.error('Error fetching products in home:', err);
+    } finally {
+      if (!silent || homeProducts.length === 0) {
+        setIsLoadingProducts(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    fetchCategories();
+    fetchHomeProducts();
+    const catChannel = supabase
+      .channel(`home-categories-changes-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => {
+        fetchCategories();
+      })
+      .subscribe();
+      
+    const prodChannel = supabase
+      .channel(`home-products-changes-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        fetchHomeProducts(true);
+      })
+      .subscribe();
+      
+    // 5-second polling fallback to ensure data updates silently even if Realtime drops or is disabled
+    const interval = setInterval(() => {
+      fetchHomeProducts(true);
+      fetchCategories();
+    }, 5000);
+      
+    return () => {
+      supabase.removeChannel(catChannel);
+      supabase.removeChannel(prodChannel);
+      clearInterval(interval);
+    };
+  }, []);
+
   useEffect(() => {
     const fetchUser = async () => {
       try {
@@ -175,9 +276,8 @@ export default function HomeScreen() {
       const updatedList = await removeFromWishlist(productId);
       setFavorites(updatedList.map(item => item.id));
     } else {
-      // Find item in PRODUCTS or TRENDING_PRODUCTS
-      const product: any = PRODUCTS.find(p => p.id === productId) || 
-                           TRENDING_PRODUCTS.find(p => p.id === productId);
+      // Find item in homeProducts
+      const product = homeProducts.find(p => p.id === productId);
       if (product) {
         const updatedList = await addToWishlist({
           id: product.id,
@@ -287,6 +387,7 @@ export default function HomeScreen() {
                 snapToAlignment="start"
                 onScroll={handleScroll}
                 scrollEventThrottle={16}
+                directionalLockEnabled={true}
                 contentContainerStyle={styles.roomScrollList}
               >
                 {[...ROOM_SHOWCASE, ...ROOM_SHOWCASE, ...ROOM_SHOWCASE].map((room, idx) => (
@@ -319,23 +420,32 @@ export default function HomeScreen() {
             <View style={styles.sectionHeader}>
               <ThemedText style={styles.sectionTitle}>Shop by Categories</ThemedText>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shopByCategoriesList}>
-              {SHOP_CATEGORIES.map((cat, idx) => (
-                <Pressable
-                  key={idx}
-                  style={styles.shopCategoryItem}
-                  onPress={() => router.push(`/product-list?category=${encodeURIComponent(cat.name)}` as any)}
-                >
-                  <View style={styles.shopCategoryCircle}>
-                    {cat.text ? (
-                      <ThemedText style={styles.shopCategoryCircleText}>{cat.text}</ThemedText>
-                    ) : (
-                      <Image source={cat.icon} style={styles.shopCategoryIcon} resizeMode="contain" />
-                    )}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEventThrottle={16} directionalLockEnabled={true} contentContainerStyle={styles.shopByCategoriesList}>
+              {isLoadingProducts ? (
+                [1, 2, 3, 4, 5].map(key => (
+                  <View key={key} style={styles.shopCategoryItem}>
+                    <Skeleton width={64} height={64} borderRadius={32} style={{ marginBottom: 12 }} />
+                    <Skeleton width={48} height={12} />
                   </View>
-                  <ThemedText style={styles.shopCategoryText}>{cat.name}</ThemedText>
-                </Pressable>
-              ))}
+                ))
+              ) : (
+                shopCategories.map((cat, idx) => (
+                  <Pressable
+                    key={idx}
+                    style={styles.shopCategoryItem}
+                    onPress={() => router.push(`/product-list?category=${encodeURIComponent(cat.name)}` as any)}
+                  >
+                    <View style={styles.shopCategoryCircle}>
+                      {cat.text ? (
+                        <ThemedText style={styles.shopCategoryCircleText}>{cat.text}</ThemedText>
+                      ) : (
+                        <Image source={cat.icon} style={styles.shopCategoryIcon} resizeMode="contain" />
+                      )}
+                    </View>
+                    <ThemedText style={styles.shopCategoryText}>{cat.name}</ThemedText>
+                  </Pressable>
+                ))
+              )}
             </ScrollView>
           </View>
 
@@ -347,9 +457,17 @@ export default function HomeScreen() {
             <ScrollView 
               horizontal 
               showsHorizontalScrollIndicator={false}
+              scrollEventThrottle={16}
+              directionalLockEnabled={true}
               contentContainerStyle={styles.categoriesList}
             >
-              {ROOM_CATEGORIES.map(cat => {
+              {isLoadingProducts ? (
+                [1, 2, 3].map(key => (
+                  <View key={key} style={{ marginRight: 16 }}>
+                    <Skeleton width={140} height={180} borderRadius={16} />
+                  </View>
+                ))
+              ) : ROOM_CATEGORIES.map(cat => {
                 return (
                   <Pressable
                     key={cat.name}
@@ -367,65 +485,27 @@ export default function HomeScreen() {
             </ScrollView>
           </View>
 
-          {/* Floating 3D Showcase */}
-          <View style={{ marginVertical: 20 }}>
-            <View style={{ paddingHorizontal: 16, marginBottom: 16, alignItems: 'center' }}>
-              <ThemedText style={{ fontFamily: 'Inter-SemiBold', fontSize: 11, letterSpacing: 2, color: '#A06E50', textTransform: 'uppercase', marginBottom: 4 }}>
-                Featured Experience
-              </ThemedText>
-              <ThemedText style={{ fontFamily: 'PlayfairDisplay-Bold', fontSize: 26, color: '#111', textAlign: 'center' }}>
-                Interactive 3D Studio
-              </ThemedText>
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: -20, zIndex: 10, paddingHorizontal: 16 }}>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                {SHOWCASE_SWATCHES.map((swatch, idx) => {
-                  const isSelected = showcaseColor === swatch.hex;
-                  return (
-                    <Pressable
-                      key={idx}
-                      style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: 12,
-                        backgroundColor: swatch.displayColor || swatch.hex,
-                        borderWidth: isSelected ? 2 : 1,
-                        borderColor: isSelected ? '#111' : '#DDD',
-                      }}
-                      onPress={() => setShowcaseColor(swatch.hex)}
-                    />
-                  );
-                })}
-              </View>
-              <Pressable 
-                style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}
-                onPress={() => setArModalVisible(true)}
-              >
-                <Ionicons name="cube-outline" size={14} color="#FFF" />
-                <ThemedText style={{ color: '#FFF', fontSize: 10, fontFamily: 'Inter-Bold', marginLeft: 4, letterSpacing: 1 }}>VIEW IN AR</ThemedText>
-              </Pressable>
-            </View>
-            <View style={{ height: 280, width: '100%', transform: [{ scale: 0.85 }], pointerEvents: 'none' }}>
-              <Product3DViewer 
-                modelPath={Platform.OS === 'web' ? '/SheenChair.glb' : require('@/assets/models/SheenChair.glb')} 
-                customColor={showcaseColor} 
-                autoRotate={true}
-                enableZoom={false}
-                enablePan={false}
-              />
-            </View>
-          </View>
-
           {/* Flash Sales Section */}
-          <View style={[styles.categoriesSection, { marginTop: 10 }]}>
+          <View style={[styles.categoriesSection, { marginTop: 32 }]}>
             <View style={styles.sectionHeader}>
               <ThemedText style={styles.sectionTitle}>Flash Sales</ThemedText>
               <Pressable onPress={() => router.push('/product-list?filter=flash')}>
                 <ThemedText style={styles.seeAllText}>View all</ThemedText>
               </Pressable>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 8 }}>
-              {PRODUCTS.filter(p => p.discount).map(product => {
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEventThrottle={16} directionalLockEnabled={true} contentContainerStyle={{ paddingHorizontal: 8 }}>
+              {isLoadingProducts ? (
+                [1, 2, 3].map(key => (
+                  <View key={`sale-skeleton-${key}`} style={{ width: 180, marginRight: 16, borderRadius: 12, overflow: 'hidden' }}>
+                    <Skeleton width="100%" height={180} />
+                    <View style={{ padding: 12, backgroundColor: colors.background }}>
+                      <Skeleton width={60} height={12} style={{ marginBottom: 8 }} />
+                      <Skeleton width="100%" height={16} style={{ marginBottom: 12 }} />
+                      <Skeleton width={80} height={16} />
+                    </View>
+                  </View>
+                ))
+              ) : homeProducts.filter(p => p.onSale).map(product => {
                 const isFav = favorites.includes(product.id);
                 return (
                   <Pressable
@@ -439,7 +519,7 @@ export default function HomeScreen() {
                     <View style={styles.productImageContainer}>
                       <Image source={product.image} style={styles.productImage} resizeMode="cover" />
                       <View style={[styles.productTagNew, { backgroundColor: '#D9534F' }]}>
-                        <ThemedText style={styles.productTagTextNew}>{product.discount}</ThemedText>
+                        <ThemedText style={styles.productTagTextNew}>{product.discount || 'SALE'}</ThemedText>
                       </View>
                       <Pressable style={styles.favBadge} onPress={() => toggleFavorite(product.id)}>
                         <Ionicons name={isFav ? "heart" : "heart-outline"} size={20} color={isFav ? "#E74C3C" : "#333"} />
@@ -449,13 +529,8 @@ export default function HomeScreen() {
                       <ThemedText style={styles.productBrand}>{product.brand}</ThemedText>
                       <ThemedText style={styles.productName} numberOfLines={1}>{product.name}</ThemedText>
                       <View style={[styles.productFooter, { justifyContent: 'flex-start', flexWrap: 'wrap', gap: 4 }]}>
-                        <ThemedText style={[styles.productPrice, { color: '#E74C3C' }]}>{product.price}</ThemedText>
+                        <ThemedText style={[styles.productPrice, { color: '#E74C3C' }]}>{product.salePrice}</ThemedText>
                         <ThemedText style={styles.productOriginalPrice}>{product.originalPrice}</ThemedText>
-                        {product.discount && (
-                          <ThemedText style={{ fontSize: 10, fontFamily: 'Inter-Bold', color: '#E74C3C' }}>
-                            {product.discount}
-                          </ThemedText>
-                        )}
                       </View>
                     </View>
                   </Pressable>
@@ -496,8 +571,19 @@ export default function HomeScreen() {
                 <ThemedText style={styles.seeAllText}>View all</ThemedText>
               </Pressable>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 8 }}>
-              {PRODUCTS.filter(p => p.tag === 'Bestseller').map(product => {
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEventThrottle={16} directionalLockEnabled={true} contentContainerStyle={{ paddingHorizontal: 8 }}>
+              {isLoadingProducts ? (
+                [1, 2, 3].map(key => (
+                  <View key={`bestseller-skeleton-${key}`} style={{ width: 180, marginRight: 16, borderRadius: 12, overflow: 'hidden' }}>
+                    <Skeleton width="100%" height={180} />
+                    <View style={{ padding: 12, backgroundColor: colors.background }}>
+                      <Skeleton width={60} height={12} style={{ marginBottom: 8 }} />
+                      <Skeleton width="100%" height={16} style={{ marginBottom: 12 }} />
+                      <Skeleton width={80} height={16} />
+                    </View>
+                  </View>
+                ))
+              ) : homeProducts.filter(p => p.isBestSeller).map(product => {
                 const isFav = favorites.includes(product.id);
                 return (
                   <Pressable
@@ -511,7 +597,7 @@ export default function HomeScreen() {
                     <View style={styles.productImageContainer}>
                       <Image source={product.image} style={styles.productImage} resizeMode="cover" />
                       <View style={[styles.productTagNew, { backgroundColor: '#F17E4F' }]}>
-                        <ThemedText style={styles.productTagTextNew}>{product.tag}</ThemedText>
+                        <ThemedText style={styles.productTagTextNew}>BEST SELLER</ThemedText>
                       </View>
                       <Pressable style={styles.favBadge} onPress={() => toggleFavorite(product.id)}>
                         <Ionicons name={isFav ? "heart" : "heart-outline"} size={20} color={isFav ? "#E74C3C" : "#333"} />
@@ -521,12 +607,13 @@ export default function HomeScreen() {
                       <ThemedText style={styles.productBrand}>{product.brand}</ThemedText>
                       <ThemedText style={styles.productName} numberOfLines={1}>{product.name}</ThemedText>
                       <View style={[styles.productFooter, { justifyContent: 'flex-start', flexWrap: 'wrap', gap: 4 }]}>
-                        <ThemedText style={[styles.productPrice, { color: '#111111' }]}>{product.price}</ThemedText>
-                        <ThemedText style={styles.productOriginalPrice}>{product.originalPrice}</ThemedText>
-                        {product.discount && (
-                          <ThemedText style={{ fontSize: 10, fontFamily: 'Inter-Bold', color: '#F17E4F' }}>
-                            {product.discount}
-                          </ThemedText>
+                        {product.onSale ? (
+                          <>
+                            <ThemedText style={[styles.productPrice, { color: '#E74C3C' }]}>{product.salePrice}</ThemedText>
+                            <ThemedText style={styles.productOriginalPrice}>{product.originalPrice}</ThemedText>
+                          </>
+                        ) : (
+                          <ThemedText style={[styles.productPrice, { color: '#111111' }]}>{product.price}</ThemedText>
                         )}
                       </View>
                     </View>
@@ -544,8 +631,19 @@ export default function HomeScreen() {
                 <ThemedText style={styles.seeAllText}>View all</ThemedText>
               </Pressable>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 8 }}>
-              {PRODUCTS.filter(p => p.tag === 'New Arrivals').map(product => {
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEventThrottle={16} directionalLockEnabled={true} contentContainerStyle={{ paddingHorizontal: 8 }}>
+              {isLoadingProducts ? (
+                [1, 2, 3].map(key => (
+                  <View key={`new-skeleton-${key}`} style={{ width: 180, marginRight: 16, borderRadius: 12, overflow: 'hidden' }}>
+                    <Skeleton width="100%" height={180} />
+                    <View style={{ padding: 12, backgroundColor: colors.background }}>
+                      <Skeleton width={60} height={12} style={{ marginBottom: 8 }} />
+                      <Skeleton width="100%" height={16} style={{ marginBottom: 12 }} />
+                      <Skeleton width={80} height={16} />
+                    </View>
+                  </View>
+                ))
+              ) : homeProducts.slice(0, 8).map(product => {
                 const isFav = favorites.includes(product.id);
                 return (
                   <Pressable
@@ -559,7 +657,7 @@ export default function HomeScreen() {
                     <View style={styles.productImageContainer}>
                       <Image source={product.image} style={styles.productImage} resizeMode="cover" />
                       <View style={[styles.productTagNew, { backgroundColor: '#5A8D73' }]}>
-                        <ThemedText style={styles.productTagTextNew}>{product.tag}</ThemedText>
+                        <ThemedText style={styles.productTagTextNew}>NEW ARRIVAL</ThemedText>
                       </View>
                       <Pressable style={styles.favBadge} onPress={() => toggleFavorite(product.id)}>
                         <Ionicons name={isFav ? "heart" : "heart-outline"} size={20} color={isFav ? "#E74C3C" : "#333"} />
@@ -568,8 +666,15 @@ export default function HomeScreen() {
                     <View style={styles.productDetails}>
                       <ThemedText style={styles.productBrand}>{product.brand}</ThemedText>
                       <ThemedText style={styles.productName} numberOfLines={1}>{product.name}</ThemedText>
-                      <View style={styles.productFooter}>
-                        <ThemedText style={[styles.productPrice, { color: '#111111' }]}>{product.price}</ThemedText>
+                      <View style={[styles.productFooter, { justifyContent: 'flex-start', flexWrap: 'wrap', gap: 4 }]}>
+                        {product.onSale ? (
+                          <>
+                            <ThemedText style={[styles.productPrice, { color: '#E74C3C' }]}>{product.salePrice}</ThemedText>
+                            <ThemedText style={styles.productOriginalPrice}>{product.originalPrice}</ThemedText>
+                          </>
+                        ) : (
+                          <ThemedText style={[styles.productPrice, { color: '#111111' }]}>{product.price}</ThemedText>
+                        )}
                       </View>
                     </View>
                   </Pressable>
@@ -583,183 +688,7 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      {/* AR Mode Overlay Modal */}
-      {Platform.OS === 'web' ? (
-        <View 
-          style={[
-            StyleSheet.absoluteFillObject, 
-            { 
-              zIndex: 99999, 
-              opacity: arModalVisible ? 1 : 0, 
-              pointerEvents: arModalVisible ? 'auto' : 'none',
-              backgroundColor: '#000',
-            }
-          ]}
-        >
-          <View style={styles.arContainer}>
-            <Image 
-              source={require('@/assets/images/AR-background.jpg')} 
-              style={styles.arCameraFeed} 
-              resizeMode="cover"
-            />
-            <View style={styles.arScrim} />
-            
-            <View style={styles.arCanvasContainer}>
-              <Product3DViewer 
-                modelPath="/SheenChair.glb"
-                customColor={showcaseColor} 
-                autoRotate={false} 
-                enableZoom={!isArLocked}
-                enablePan={!isArLocked}
-                snapshotTrigger={snapshotTrigger}
-              />
-            </View>
 
-            <View style={styles.arHeader}>
-              <Pressable 
-                style={styles.arRoundBtn} 
-                onPress={() => setArModalVisible(false)}
-              >
-                <Ionicons name="close" size={20} color="#111" />
-              </Pressable>
-              <View style={styles.arTitleContainer}>
-                <ThemedText style={styles.arTitleText}>3D AR PLACEMENT</ThemedText>
-                <ThemedText style={styles.arSubTitleText}>Live Scale Simulation</ThemedText>
-              </View>
-              <View style={{ width: 40 }} />
-            </View>
-
-            {/* AR Color Swatches */}
-            <View style={{ position: 'absolute', right: 20, top: 120, zIndex: 10, gap: 12, backgroundColor: 'rgba(255,255,255,0.85)', padding: 12, borderRadius: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10 }}>
-              {SHOWCASE_SWATCHES.map((swatch, idx) => {
-                const isSelected = showcaseColor === swatch.hex;
-                return (
-                  <Pressable
-                    key={idx}
-                    onPress={() => setShowcaseColor(swatch.hex)}
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 14,
-                      backgroundColor: swatch.hex,
-                      borderWidth: isSelected ? 3 : 1,
-                      borderColor: isSelected ? '#111' : '#E5E5E5',
-                    }}
-                  />
-                );
-              })}
-            </View>
-
-            <View style={styles.arFooter}>
-              <Pressable 
-                style={[styles.arActionBtn, isArLocked && { backgroundColor: '#E8F5E9' }]}
-                onPress={() => setIsArLocked(!isArLocked)}
-              >
-                <Ionicons name={isArLocked ? "lock-closed" : "lock-open-outline"} size={18} color={isArLocked ? "#2E7D32" : "#111"} />
-                <ThemedText style={[styles.arActionBtnText, isArLocked && { color: '#2E7D32' }]}>
-                  {isArLocked ? 'Position Locked' : 'Lock Position'}
-                </ThemedText>
-              </Pressable>
-              
-              <Pressable 
-                style={[styles.arActionBtn, { backgroundColor: '#111' }]}
-                onPress={() => {
-                  setSnapshotTrigger(prev => prev + 1);
-                  setTimeout(() => alert('Snapshot captured & downloaded!'), 500);
-                }}
-              >
-                <Ionicons name="camera" size={18} color="#FFF" />
-                <ThemedText style={[styles.arActionBtnText, { color: '#FFF' }]}>Snapshot</ThemedText>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      ) : (
-        <Modal
-          animationType="slide"
-          transparent={false}
-          visible={arModalVisible}
-          onRequestClose={() => setArModalVisible(false)}
-        >
-          <View style={styles.arContainer}>
-            <Image 
-              source={require('@/assets/images/AR-background.jpg')} 
-              style={styles.arCameraFeed} 
-              resizeMode="cover"
-            />
-            <View style={styles.arScrim} />
-            
-            <View style={styles.arCanvasContainer}>
-              <Product3DViewer 
-                modelPath={require('@/assets/models/SheenChair.glb')}
-                customColor={showcaseColor} 
-                autoRotate={false} 
-                enableZoom={!isArLocked}
-                enablePan={!isArLocked}
-                snapshotTrigger={snapshotTrigger}
-              />
-            </View>
-
-            <View style={styles.arHeader}>
-              <Pressable 
-                style={styles.arRoundBtn} 
-                onPress={() => setArModalVisible(false)}
-              >
-                <Ionicons name="close" size={20} color="#111" />
-              </Pressable>
-              <View style={styles.arTitleContainer}>
-                <ThemedText style={styles.arTitleText}>3D AR PLACEMENT</ThemedText>
-                <ThemedText style={styles.arSubTitleText}>Live Scale Simulation</ThemedText>
-              </View>
-              <View style={{ width: 40 }} />
-            </View>
-
-            {/* AR Color Swatches */}
-            <View style={{ position: 'absolute', right: 20, top: 120, zIndex: 10, gap: 12, backgroundColor: 'rgba(255,255,255,0.85)', padding: 12, borderRadius: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10 }}>
-              {SHOWCASE_SWATCHES.map((swatch, idx) => {
-                const isSelected = showcaseColor === swatch.hex;
-                return (
-                  <Pressable
-                    key={idx}
-                    onPress={() => setShowcaseColor(swatch.hex)}
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 14,
-                      backgroundColor: swatch.hex,
-                      borderWidth: isSelected ? 3 : 1,
-                      borderColor: isSelected ? '#111' : '#E5E5E5',
-                    }}
-                  />
-                );
-              })}
-            </View>
-
-            <View style={styles.arFooter}>
-              <Pressable 
-                style={[styles.arActionBtn, isArLocked && { backgroundColor: '#E8F5E9' }]}
-                onPress={() => setIsArLocked(!isArLocked)}
-              >
-                <Ionicons name={isArLocked ? "lock-closed" : "lock-open-outline"} size={18} color={isArLocked ? "#2E7D32" : "#111"} />
-                <ThemedText style={[styles.arActionBtnText, isArLocked && { color: '#2E7D32' }]}>
-                  {isArLocked ? 'Position Locked' : 'Lock Position'}
-                </ThemedText>
-              </Pressable>
-              
-              <Pressable 
-                style={[styles.arActionBtn, { backgroundColor: '#111' }]}
-                onPress={() => {
-                  setSnapshotTrigger(prev => prev + 1);
-                  setTimeout(() => alert('Snapshot captured & downloaded!'), 500);
-                }}
-              >
-                <Ionicons name="camera" size={18} color="#FFF" />
-                <ThemedText style={[styles.arActionBtnText, { color: '#FFF' }]}>Snapshot</ThemedText>
-              </Pressable>
-            </View>
-          </View>
-        </Modal>
-      )}
 
     </ThemedView>
   );

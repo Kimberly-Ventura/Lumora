@@ -7,7 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getCart, removeFromCart, updateQuantity, clearCart, CartItem } from '@/lib/cartHelper';
-
+import { Skeleton } from '@/components/Skeleton';
 import { supabase } from '@/lib/supabase';
 
 export default function CartScreen() {
@@ -18,7 +18,8 @@ export default function CartScreen() {
   const isMobile = width < 768;
 
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
-  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
@@ -27,13 +28,21 @@ export default function CartScreen() {
   );
 
   const loadCart = async () => {
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) {
-      setCartItems([]);
-      return;
+    setIsLoading(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) {
+        setCartItems([]);
+        setSelectedKeys([]);
+        return;
+      }
+      const items = await getCart();
+      setCartItems(items);
+      // Auto-select all items on load
+      setSelectedKeys(items.map(item => `${item.id}-${item.selectedColor || ''}`));
+    } finally {
+      setIsLoading(false);
     }
-    const items = await getCart();
-    setCartItems(items);
   };
 
   const handleUpdateQuantity = async (id: string, newQty: number, selectedColor?: string) => {
@@ -52,78 +61,97 @@ export default function CartScreen() {
   };
 
   const calculateSubtotal = () => {
-    return cartItems.reduce((sum, item) => sum + parsePrice(item.price) * item.quantity, 0);
+    return cartItems
+      .filter(item => selectedKeys.includes(`${item.id}-${item.selectedColor || ''}`))
+      .reduce((sum, item) => sum + parsePrice(item.price) * item.quantity, 0);
   };
 
   const subtotal = calculateSubtotal();
 
-  const handleCheckout = async () => {
-    if (cartItems.length === 0) return;
-    setIsCheckingOut(true);
-
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData?.session?.user?.id;
-      
-      if (!userId) {
-        alert("You must be logged in to checkout.");
-        setIsCheckingOut(false);
-        return;
-      }
-
-      // 1. Insert order
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .insert({
-          customer_id: userId,
-          status: 'pending',
-          total_amount: subtotal,
-        })
-        .select('id')
-        .single();
-
-      if (orderError) throw orderError;
-      const orderId = orderData.id;
-
-      // 2. Insert order items
-      const orderItems = cartItems.map(item => {
-        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id);
-        
-        return {
-          order_id: orderId,
-          product_id: isUUID ? item.id : null,
-          quantity: item.quantity,
-          unit_price: parsePrice(item.price)
-        };
-      });
-
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(orderItems);
-
-      if (itemsError) throw itemsError;
-
-      // 3. Success
-      await clearCart();
-      setCartItems([]);
-      alert(`Order placed! Your order ID is #ORD-${orderId.substring(0, 4).toUpperCase()}`);
-    } catch (err) {
-      console.error(err);
-      alert("There was an error placing your order. Please try again.");
-    } finally {
-      setIsCheckingOut(false);
+  const handleCheckout = () => {
+    if (selectedKeys.length === 0) {
+      alert("Please select at least one item to checkout.");
+      return;
     }
+    router.push({
+      pathname: '/checkout',
+      params: { selectedKeys: JSON.stringify(selectedKeys) }
+    });
   };
 
   const renderCartItems = () => {
+    if (isLoading) {
+      return (
+        <View style={styles.itemsList}>
+          {[1, 2, 3].map(key => (
+            <View key={`skeleton-${key}`} style={[styles.itemCard, { borderColor: colors.border, padding: 16 }]}>
+              <View style={styles.itemCheckbox}>
+                <Skeleton width={20} height={20} borderRadius={10} />
+              </View>
+              <View style={styles.imageContainer}>
+                <Skeleton width="100%" height="100%" borderRadius={8} />
+              </View>
+              <View style={styles.detailsContainer}>
+                <Skeleton width="80%" height={16} style={{ marginBottom: 12 }} />
+                <Skeleton width="40%" height={14} style={{ marginBottom: 16 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Skeleton width={60} height={18} />
+                  <Skeleton width={80} height={32} borderRadius={16} />
+                </View>
+              </View>
+            </View>
+          ))}
+        </View>
+      );
+    }
+
     return (
       <View style={styles.itemsList}>
+        {/* Select All Row */}
+        {cartItems.length > 0 && (
+          <View style={styles.selectAllRow}>
+            <Pressable 
+              style={styles.checkboxContainer}
+              onPress={() => {
+                if (selectedKeys.length === cartItems.length) {
+                  setSelectedKeys([]); // Deselect all
+                } else {
+                  setSelectedKeys(cartItems.map(item => `${item.id}-${item.selectedColor || ''}`)); // Select all
+                }
+              }}
+            >
+              <View style={[styles.checkbox, selectedKeys.length === cartItems.length && styles.checkboxActive]}>
+                {selectedKeys.length === cartItems.length && <Ionicons name="checkmark" size={14} color="#FFF" />}
+              </View>
+              <ThemedText style={styles.selectAllText}>
+                Select All Items ({cartItems.length})
+              </ThemedText>
+            </Pressable>
+          </View>
+        )}
+
         {cartItems.map((item, index) => {
-          const itemPriceVal = parsePrice(item.price);
-          const itemSubtotal = itemPriceVal * item.quantity;
+          const itemKey = `${item.id}-${item.selectedColor || ''}`;
+          const isSelected = selectedKeys.includes(itemKey);
           
           return (
-            <View key={`${item.id}-${item.selectedColor || ''}-${index}`} style={[styles.itemCard, { borderColor: colors.border }]}>
+            <View key={`${itemKey}-${index}`} style={[styles.itemCard, { borderColor: colors.border }]}>
+              {/* Checkbox */}
+              <Pressable 
+                style={styles.itemCheckbox}
+                onPress={() => {
+                  if (isSelected) {
+                    setSelectedKeys(prev => prev.filter(k => k !== itemKey));
+                  } else {
+                    setSelectedKeys(prev => [...prev, itemKey]);
+                  }
+                }}
+              >
+                <View style={[styles.checkbox, isSelected && styles.checkboxActive]}>
+                  {isSelected && <Ionicons name="checkmark" size={14} color="#FFF" />}
+                </View>
+              </Pressable>
+
               {/* Product Thumbnail (Pressable to Edit) */}
               <Pressable 
                 onPress={() => router.push(`/product/${item.id}?editMode=true&editColor=${encodeURIComponent(item.selectedColor || '')}` as any)}
@@ -144,12 +172,16 @@ export default function CartScreen() {
                       {item.name}
                     </ThemedText>
                   </Pressable>
-                  <Pressable 
-                    onPress={() => handleRemoveItem(item.id, item.selectedColor)}
-                    style={styles.deleteButton}
-                  >
-                    <Ionicons name="trash-outline" size={18} color="#E74C3C" />
-                  </Pressable>
+                    <Pressable 
+                      onPress={() => {
+                        handleRemoveItem(item.id, item.selectedColor);
+                        // Also remove from selected keys if it was selected
+                        setSelectedKeys(prev => prev.filter(k => k !== itemKey));
+                      }}
+                      style={styles.deleteButton}
+                    >
+                      <Ionicons name="trash-outline" size={18} color="#E74C3C" />
+                    </Pressable>
                 </View>
 
                 {/* Middle Row: Brand & Swatch Badge */}
@@ -228,65 +260,37 @@ export default function CartScreen() {
         <View style={{ flex: 1 }}>
           <ScrollView 
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={[styles.scrollContent, !isMobile && styles.webScrollContent]}
+            contentContainerStyle={[styles.scrollContent]}
           >
-            <View style={[styles.contentLayout, !isMobile && styles.webLayout]}>
-              {/* Left Side: Items List */}
-              <View style={[styles.leftColumn, !isMobile && { flex: 1.6 }]}>
-                {renderCartItems()}
-              </View>
-
-              {/* Right Side: Order Summary Panel */}
-              <View style={[styles.rightColumn, !isMobile && { flex: 1, marginLeft: 30 }]}>
-                <View style={[styles.summaryCard, { backgroundColor: '#F9F8F6', borderColor: colors.border }]}>
-                  <ThemedText style={styles.summaryTitle}>ORDER SUMMARY</ThemedText>
-                  
-                  <View style={styles.summaryRow}>
-                    <ThemedText style={styles.summaryLabel}>Subtotal</ThemedText>
-                    <ThemedText style={styles.summaryValue}>
-                      ₱{subtotal.toLocaleString(undefined, { minimumFractionDigits: 0 })}
-                    </ThemedText>
-                  </View>
-
-                  <View style={styles.summaryRow}>
-                    <ThemedText style={styles.summaryLabel}>Shipping</ThemedText>
-                    <ThemedText style={[styles.summaryValue, { color: '#27AE60', fontFamily: 'Inter-SemiBold' }]}>
-                      Complimentary
-                    </ThemedText>
-                  </View>
-
-                  <View style={styles.summaryRow}>
-                    <ThemedText style={styles.summaryLabel}>Tax</ThemedText>
-                    <ThemedText style={styles.summaryValue}>Calculated at checkout</ThemedText>
-                  </View>
-
-                  <View style={[styles.divider, { backgroundColor: colors.border }]} />
-
-                  <View style={styles.totalRow}>
-                    <ThemedText style={styles.totalLabel}>Estimated Total</ThemedText>
-                    <ThemedText style={styles.totalValue}>
-                      ₱{subtotal.toLocaleString(undefined, { minimumFractionDigits: 0 })}
-                    </ThemedText>
-                  </View>
-
-                  <Pressable 
-                    style={[styles.checkoutButton, { backgroundColor: isCheckingOut ? '#666666' : '#111111' }]}
-                    onPress={handleCheckout}
-                    disabled={isCheckingOut}
-                  >
-                    <ThemedText style={styles.checkoutBtnText}>
-                      {isCheckingOut ? 'PROCESSING...' : 'PROCEED TO CHECKOUT'}
-                    </ThemedText>
-                    {!isCheckingOut && <Ionicons name="lock-closed-outline" size={14} color="#FFF" />}
-                  </Pressable>
-
-                  <ThemedText style={styles.securityDisclaimer}>
-                    Secure payment options verified. Delivery scheduled within 3-5 business days of post-purchase confirmation.
-                  </ThemedText>
-                </View>
-              </View>
+            <View style={styles.contentLayout}>
+              {renderCartItems()}
             </View>
           </ScrollView>
+
+          {/* Sticky Bottom Bar for simple Cart Total & Checkout */}
+          <View style={[styles.stickyBottomBar, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+            <View style={styles.bottomBarContent}>
+              <View style={styles.totalContainer}>
+                <ThemedText style={styles.cartTotalLabel}>Selected ({selectedKeys.length})</ThemedText>
+                <ThemedText style={styles.cartTotalValue}>
+                  ₱{subtotal.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                </ThemedText>
+              </View>
+              <Pressable 
+                style={[
+                  styles.proceedButton, 
+                  { backgroundColor: selectedKeys.length > 0 ? '#111111' : '#666' }
+                ]}
+                onPress={handleCheckout}
+                disabled={selectedKeys.length === 0}
+              >
+                <ThemedText style={styles.proceedButtonText}>
+                  PROCEED TO CHECKOUT
+                </ThemedText>
+                <Ionicons name="arrow-forward-outline" size={16} color="#FFF" />
+              </Pressable>
+            </View>
+          </View>
         </View>
       )}
     </ThemedView>
@@ -345,23 +349,45 @@ const styles = StyleSheet.create({
     padding: Spacing.m,
     paddingBottom: 40,
   },
-  webScrollContent: {
-    alignItems: 'center',
-  },
   contentLayout: {
     width: '100%',
-    maxWidth: 1200,
+    maxWidth: 800,
+    alignSelf: 'center',
   },
-  webLayout: {
+  selectAllRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#F9F8F6',
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  checkboxContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
-  leftColumn: {
-    width: '100%',
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#CCC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
   },
-  rightColumn: {
-    width: '100%',
-    marginTop: Spacing.l,
+  checkboxActive: {
+    backgroundColor: '#111',
+    borderColor: '#111',
+  },
+  selectAllText: {
+    marginLeft: 12,
+    fontSize: 14,
+    fontFamily: 'Inter-SemiBold',
+    color: '#111',
+  },
+  itemCheckbox: {
+    padding: 8,
+    marginRight: 8,
   },
   itemsList: {
     gap: 16,
@@ -476,74 +502,46 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Bold',
     color: '#111',
   },
-  summaryCard: {
-    padding: 24,
-    borderRadius: 20,
-    borderWidth: 1,
+  stickyBottomBar: {
+    borderTopWidth: 1,
+    paddingVertical: 16,
+    paddingHorizontal: Spacing.m,
   },
-  summaryTitle: {
-    fontSize: 12,
-    fontFamily: 'Inter-Bold',
-    letterSpacing: 2,
-    color: '#111',
-    marginBottom: 20,
-  },
-  summaryRow: {
+  bottomBarContent: {
+    width: '100%',
+    maxWidth: 800,
+    alignSelf: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
   },
-  summaryLabel: {
+  totalContainer: {
+    flex: 1,
+  },
+  cartTotalLabel: {
     fontSize: 13,
     fontFamily: 'Inter-Regular',
     color: '#666',
   },
-  summaryValue: {
-    fontSize: 13,
-    fontFamily: 'Inter-SemiBold',
-    color: '#111',
-  },
-  divider: {
-    height: 1,
-    marginVertical: 16,
-  },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 22,
-  },
-  totalLabel: {
-    fontSize: 15,
-    fontFamily: 'Inter-SemiBold',
-    color: '#111',
-  },
-  totalValue: {
-    fontSize: 20,
+  cartTotalValue: {
+    fontSize: 22,
     fontFamily: 'PlayfairDisplay-Bold',
     color: '#111',
+    marginTop: 2,
   },
-  checkoutButton: {
+  proceedButton: {
     flexDirection: 'row',
     height: 52,
+    paddingHorizontal: 24,
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
   },
-  checkoutBtnText: {
+  proceedButtonText: {
     color: '#FFF',
     fontSize: 12,
     fontFamily: 'Inter-Bold',
     letterSpacing: 2,
-  },
-  securityDisclaimer: {
-    fontSize: 10,
-    fontFamily: 'Inter-Regular',
-    color: '#999',
-    textAlign: 'center',
-    lineHeight: 14,
-    marginTop: 16,
   },
 });

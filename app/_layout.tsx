@@ -50,6 +50,10 @@ function AppContent() {
       <Stack.Screen name="contact"     options={{ headerShown: false }} />
       <Stack.Screen name="product-list" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="notifications" options={{ headerShown: false }} />
+      <Stack.Screen name="checkout"    options={{ headerShown: false }} />
+      <Stack.Screen name="order-history" options={{ headerShown: false }} />
+      <Stack.Screen name="order-confirmation" options={{ headerShown: false }} />
+      <Stack.Screen name="order/[id]"  options={{ headerShown: false }} />
       <Stack.Screen name="modal"       options={{ presentation: 'modal', title: 'Modal' }} />
     </Stack>
   );

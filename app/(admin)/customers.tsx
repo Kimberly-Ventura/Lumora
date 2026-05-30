@@ -183,22 +183,28 @@ export default function AdminCustomersScreen() {
 
           <View style={{ width: '100%', marginTop: 32 }}>
             <Text style={styles.sectionHeading}>ORDER HISTORY</Text>
-            {selectedCustomer.orders.length === 0 ? (
-              <Text style={styles.emptyText}>No orders yet</Text>
-            ) : (
-              selectedCustomer.orders.map(order => (
-                <View key={order.id} style={styles.mobileOrderRow}>
-                  <View>
-                    <Text style={styles.orderIdText}>{getShortId(order.id)}</Text>
-                    <Text style={styles.orderDateText}>{formatDate(order.created_at)}</Text>
+            <ScrollView 
+              style={{ maxHeight: 300, width: '100%' }}
+              nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+            >
+              {selectedCustomer.orders.length === 0 ? (
+                <Text style={styles.emptyText}>No orders yet</Text>
+              ) : (
+                selectedCustomer.orders.map(order => (
+                  <View key={order.id} style={styles.mobileOrderRow}>
+                    <View>
+                      <Text style={styles.orderIdText}>{getShortId(order.id)}</Text>
+                      <Text style={styles.orderDateText}>{formatDate(order.created_at)}</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                      <Text style={styles.orderAmountText}>{formatFullCurrency(order.total_amount)}</Text>
+                      <StatusBadge status={order.status} />
+                    </View>
                   </View>
-                  <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                    <Text style={styles.orderAmountText}>{formatFullCurrency(order.total_amount)}</Text>
-                    <StatusBadge status={order.status} />
-                  </View>
-                </View>
-              ))
-            )}
+                ))
+              )}
+            </ScrollView>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -383,9 +389,15 @@ export default function AdminCustomersScreen() {
                       </View>
 
                       <Text style={styles.sectionHeading}>ORDER HISTORY</Text>
-                      <View style={styles.historyList}>
+                      <ScrollView 
+                        style={[styles.historyList, { maxHeight: 240 }]}
+                        nestedScrollEnabled={true}
+                        showsVerticalScrollIndicator={true}
+                      >
                         {customer.orders.length === 0 ? (
-                          <Text style={styles.emptyText}>No orders found</Text>
+                          <View style={{ padding: 20 }}>
+                            <Text style={styles.emptyText}>No orders found</Text>
+                          </View>
                         ) : (
                           customer.orders.map(order => (
                             <View key={order.id} style={styles.historyRow}>
@@ -398,7 +410,7 @@ export default function AdminCustomersScreen() {
                             </View>
                           ))
                         )}
-                      </View>
+                      </ScrollView>
                     </View>
                   )}
                 </React.Fragment>

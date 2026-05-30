@@ -18,6 +18,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
+import { clearWishlistForUser } from '@/lib/wishlistHelper';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -89,6 +90,9 @@ export default function ProfileScreen() {
   const handleSignOut = async () => {
     try {
       if (user?.id) {
+        // Clear this user's local wishlist so the next user starts fresh
+        await clearWishlistForUser(user.id);
+
         const { error: updateError } = await supabase
           .from('profiles')
           .update({ updated_at: new Date().toISOString() })
@@ -169,7 +173,7 @@ export default function ProfileScreen() {
             </Pressable>
 
             <View style={[styles.card, { backgroundColor: colors.cardBackground }]}>
-              <ProfileRow icon="bag-outline" label="My Orders" colors={colors} onPress={() => {}} />
+              <ProfileRow icon="bag-outline" label="My Orders" colors={colors} onPress={() => router.push('/order-history' as any)} />
               <ProfileRow icon="heart-outline" label="Wishlist" colors={colors} onPress={() => router.push('/wishlist' as any)} />
               <ProfileRow icon="location-outline" label="Shipping Address" colors={colors} onPress={() => {}} />
               <ProfileRow icon="card-outline" label="Payment Methods" colors={colors} onPress={() => {}} />

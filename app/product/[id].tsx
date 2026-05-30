@@ -14,7 +14,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Product3DViewer } from '@/components/Product3DViewer';
+import { Skeleton } from '@/components/Skeleton';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from 'react-native';
 import { isFavorite, addToWishlist, removeFromWishlist } from '@/lib/wishlistHelper';
@@ -89,19 +89,18 @@ export default function ProductDetailsScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const [selectedColor, setSelectedColor] = useState(SWATCHES[0].hex);
   const [isFavorited, setIsFavorited] = useState(false);
-  const [previewMode, setPreviewMode] = useState<'3D' | '2D'>('3D');
   const [dbProduct, setDbProduct] = useState<any>(null);
   const [loadingDb, setLoadingDb] = useState(false);
   const [productNotFound, setProductNotFound] = useState(false);
 
   useEffect(() => {
-    const fetchProduct = async () => {
+    const fetchProduct = async (silent = false) => {
       if (!id || PRODUCT_CATALOG[id as string]) {
         setDbProduct(null);
         return;
       }
       try {
-        setLoadingDb(true);
+        if (!silent) setLoadingDb(true);
         const { data, error } = await supabase
           .from('products')
           .select('*, categories(name)')
@@ -117,9 +116,16 @@ export default function ProductDetailsScreen() {
         }
 
         if (data) {
+          const isOnSale = data.on_sale && data.discount_percentage && data.discount_percentage > 0;
+          const numericPrice = parseFloat(data.price);
           setDbProduct({
             name: data.name,
-            price: `₱${parseFloat(data.price).toLocaleString('en-US')}`,
+            price: `₱${numericPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            originalPrice: isOnSale ? `₱${numericPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+            salePrice: isOnSale ? `₱${(numericPrice * (1 - data.discount_percentage / 100)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+            onSale: isOnSale,
+            discount: isOnSale ? `${data.discount_percentage}% OFF` : null,
+            stock: data.stock,
             image: data.image_url ? { uri: data.image_url } : require('@/assets/images/armchair_clean.png'),
             category: data.categories?.name || 'Chair',
             description: data.description || 'A curated piece from the Lumora archive.',
@@ -127,6 +133,7 @@ export default function ProductDetailsScreen() {
             modelPath: data.model_url || undefined,
             isDbProduct: true
           });
+          setProductNotFound(false);
         } else {
           // Product exists but is hidden (is_active = false) — treat as not found
           setDbProduct(null);
@@ -136,11 +143,26 @@ export default function ProductDetailsScreen() {
         console.error('Error in fetchProduct:', err);
         setDbProduct(null);
       } finally {
-        setLoadingDb(false);
+        if (!silent) setLoadingDb(false);
       }
     };
 
     fetchProduct();
+
+    const channel = supabase
+      .channel(`product-detail-${id}-${Date.now()}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'products', filter: `id=eq.${id}` },
+        () => {
+          fetchProduct(true);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [id]);
 
   const product = dbProduct || PRODUCT_CATALOG[id as string] || {
@@ -161,6 +183,11 @@ export default function ProductDetailsScreen() {
   useEffect(() => {
     checkFavorite();
   }, [id]);
+
+  const { width: currentWidth } = useWindowDimensions();
+  const isWeb = Platform.OS === 'web';
+  const isDesktop = isWeb && currentWidth > 768;
+  const containerWidth = isWeb ? Math.min(currentWidth, 1200) : currentWidth;
 
   // Show unavailable screen for hidden/deleted DB products
   if (productNotFound && !PRODUCT_CATALOG[id as string]) {
@@ -208,10 +235,7 @@ export default function ProductDetailsScreen() {
     }
   };
 
-  const { width: currentWidth } = useWindowDimensions();
-  const isWeb = Platform.OS === 'web';
-  const isDesktop = isWeb && currentWidth > 768;
-  const containerWidth = isWeb ? Math.min(currentWidth, 1200) : currentWidth;
+
 
   const handleAddToCart = async () => {
     if (!id) return;
@@ -278,18 +302,8 @@ export default function ProductDetailsScreen() {
             <View style={[styles.visualSection, isDesktop && styles.webVisualSection]}>
               <View style={[styles.centerpieceContainer, { backgroundColor: '#FFFFFF' }]}>
                 {loadingDb ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#111" />
-                  </View>
-                ) : (product.modelPath && previewMode === '3D') ? (
-                  <View style={styles.threedContainer}>
-                    <Product3DViewer 
-                      modelPath={product.modelPath} 
-                      customColor={selectedColor} 
-                      autoRotate={false}
-                      enableZoom={true}
-                      enablePan={true}
-                    />
+                  <View style={[styles.loadingContainer, { padding: 20 }]}>
+                    <Skeleton width="100%" height="100%" borderRadius={24} />
                   </View>
                 ) : (
                   <View style={styles.imageContainer}>
@@ -301,25 +315,7 @@ export default function ProductDetailsScreen() {
                   </View>
                 )}
 
-                {/* Floating Mode Toggle Pill (only if 3D model is supported) */}
-                {product.modelPath && !loadingDb && (
-                  <View style={styles.toggleContainer}>
-                    <Pressable 
-                      style={[styles.toggleBtn, previewMode === '3D' && styles.toggleBtnActive]}
-                      onPress={() => setPreviewMode('3D')}
-                    >
-                      <Ionicons name="cube" size={12} color={previewMode === '3D' ? '#FFFFFF' : '#888888'} />
-                      <ThemedText style={[styles.toggleText, previewMode === '3D' && styles.toggleTextActive]}>3D Spotlight</ThemedText>
-                    </Pressable>
-                    <Pressable 
-                      style={[styles.toggleBtn, previewMode === '2D' && styles.toggleBtnActive]}
-                      onPress={() => setPreviewMode('2D')}
-                    >
-                      <Ionicons name="image" size={12} color={previewMode === '2D' ? '#FFFFFF' : '#888888'} />
-                      <ThemedText style={[styles.toggleText, previewMode === '2D' && styles.toggleTextActive]}>2D View</ThemedText>
-                    </Pressable>
-                  </View>
-                )}
+
 
                 {/* Sidebar Color Swatches */}
                 {!loadingDb && (
@@ -346,14 +342,54 @@ export default function ProductDetailsScreen() {
 
             {/* Info, Specs, and CTA (Right Column on Web) */}
             <View style={[styles.infoSection, isDesktop && styles.webInfoSection]}>
-              {/* Product Heading & Price */}
-              <View style={styles.titlePriceRow}>
-                <View style={{ flex: 1 }}>
-                  <ThemedText style={styles.categoryLabel}>{product.category.toUpperCase()}</ThemedText>
-                  <ThemedText style={styles.productName}>{product.name}</ThemedText>
-                </View>
-                <ThemedText style={styles.productPrice}>{product.price}</ThemedText>
-              </View>
+              {loadingDb ? (
+                <>
+                  <View style={styles.titlePriceRow}>
+                    <View style={{ flex: 1, gap: 8 }}>
+                      <Skeleton width={100} height={14} />
+                      <Skeleton width="80%" height={32} />
+                    </View>
+                    <Skeleton width={80} height={28} />
+                  </View>
+                  <View style={[styles.divider, { backgroundColor: '#E7E0D8' }]} />
+                  <View style={styles.descriptionContainer}>
+                    <Skeleton width={120} height={18} style={{ marginBottom: 12 }} />
+                    <Skeleton width="100%" height={16} style={{ marginBottom: 8 }} />
+                    <Skeleton width="100%" height={16} style={{ marginBottom: 8 }} />
+                    <Skeleton width="90%" height={16} style={{ marginBottom: 24 }} />
+                  </View>
+                  <View style={styles.specsContainer}>
+                    <Skeleton width={200} height={16} style={{ marginBottom: 12 }} />
+                    <Skeleton width={180} height={16} style={{ marginBottom: 12 }} />
+                    <Skeleton width={220} height={16} />
+                  </View>
+                  {isDesktop && (
+                    <View style={{ marginTop: 40 }}>
+                      <Skeleton width="100%" height={56} borderRadius={28} />
+                    </View>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Product Heading & Price */}
+                  <View style={styles.titlePriceRow}>
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={styles.categoryLabel}>{product.category.toUpperCase()}</ThemedText>
+                      <ThemedText style={styles.productName}>{product.name}</ThemedText>
+                      {product.stock === 0 && <ThemedText style={{ color: '#DC2626', fontFamily: 'Inter-Bold', marginTop: 4 }}>OUT OF STOCK</ThemedText>}
+                      {product.stock > 0 && product.stock < 10 && <ThemedText style={{ color: '#EA580C', fontFamily: 'Inter-SemiBold', marginTop: 4 }}>Only {product.stock} left in stock</ThemedText>}
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      {product.onSale ? (
+                        <>
+                          <ThemedText style={[styles.productPrice, { color: '#DC2626' }]}>{product.salePrice}</ThemedText>
+                          <ThemedText style={[styles.productPrice, { fontSize: 14, textDecorationLine: 'line-through', color: '#999', marginTop: 2 }]}>{product.originalPrice}</ThemedText>
+                        </>
+                      ) : (
+                        <ThemedText style={styles.productPrice}>{product.price}</ThemedText>
+                      )}
+                    </View>
+                  </View>
 
               <View style={[styles.divider, { backgroundColor: '#E7E0D8' }]} />
 
@@ -385,14 +421,17 @@ export default function ProductDetailsScreen() {
               {isDesktop && (
                 <View style={{ marginTop: 40 }}>
                   <Pressable 
-                    style={[styles.addToCartBtn, { backgroundColor: '#111111' }]}
-                    onPress={handleAddToCart}
+                    style={[styles.addToCartBtn, { backgroundColor: product.stock === 0 ? '#999' : '#111111' }]}
+                    onPress={product.stock === 0 ? undefined : handleAddToCart}
+                    disabled={product.stock === 0}
                   >
                     <ThemedText style={styles.addToCartText}>
-                      {editMode === 'true' ? 'Save Changes' : '+Add to Cart'}
+                      {product.stock === 0 ? 'Out of Stock' : (editMode === 'true' ? 'Save Changes' : '+Add to Cart')}
                     </ThemedText>
                   </Pressable>
                 </View>
+              )}
+                </>
               )}
             </View>
 
@@ -404,29 +443,47 @@ export default function ProductDetailsScreen() {
       {!isDesktop && (
         <View style={styles.bottomBarContainer}>
           <View style={[styles.bottomBar, { width: containerWidth }]}>
-            <View style={styles.bottomBarLeft}>
-              <View style={styles.categoryCircle}>
-                <Ionicons 
-                  name={product.category === 'Lamp' ? 'bulb-outline' : 'bed-outline'} 
-                  size={18} 
-                  color="#FFF" 
-                />
-              </View>
-              <View>
-                <ThemedText style={styles.bottomBarLabel}>Price</ThemedText>
-                <ThemedText style={styles.bottomBarPrice}>{product.price}</ThemedText>
-              </View>
-            </View>
-            <View style={styles.buttonWrapper}>
-              <Pressable 
-                style={[styles.addToCartBtn, { backgroundColor: '#111111' }]}
-                onPress={handleAddToCart}
-              >
-                <ThemedText style={styles.addToCartText}>
-                  {editMode === 'true' ? 'Save Changes' : '+Add to Cart'}
-                </ThemedText>
-              </Pressable>
-            </View>
+            {loadingDb ? (
+              <>
+                <View style={styles.bottomBarLeft}>
+                  <Skeleton width={36} height={36} borderRadius={18} />
+                  <View style={{ marginLeft: 12 }}>
+                    <Skeleton width={40} height={12} style={{ marginBottom: 4 }} />
+                    <Skeleton width={80} height={16} />
+                  </View>
+                </View>
+                <View style={styles.buttonWrapper}>
+                  <Skeleton width="100%" height={48} borderRadius={24} />
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.bottomBarLeft}>
+                  <View style={styles.categoryCircle}>
+                    <Ionicons 
+                      name={product.category === 'Lamp' ? 'bulb-outline' : 'bed-outline'} 
+                      size={18} 
+                      color="#FFF" 
+                    />
+                  </View>
+                  <View>
+                    <ThemedText style={styles.bottomBarLabel}>Price</ThemedText>
+                    <ThemedText style={styles.bottomBarPrice}>{product.price}</ThemedText>
+                  </View>
+                </View>
+                <View style={styles.buttonWrapper}>
+                  <Pressable 
+                    style={[styles.addToCartBtn, { backgroundColor: product.stock === 0 ? '#999' : '#111111' }]}
+                    onPress={product.stock === 0 ? undefined : handleAddToCart}
+                    disabled={product.stock === 0}
+                  >
+                    <ThemedText style={styles.addToCartText}>
+                      {product.stock === 0 ? 'Out of Stock' : (editMode === 'true' ? 'Save Changes' : '+Add to Cart')}
+                    </ThemedText>
+                  </Pressable>
+                </View>
+              </>
+            )}
           </View>
         </View>
       )}

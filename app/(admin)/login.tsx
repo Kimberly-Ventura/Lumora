@@ -17,11 +17,13 @@ import { supabase } from '@/lib/supabase';
 
 export default function AdminLoginScreen() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('admin@gmail.com');
+  const [password, setPassword] = useState('admin1');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const ADMIN_EMAIL = 'admin@gmail.com'; // must match _layout.tsx
 
   const handleSignIn = async () => {
     if (!email.trim() || !password) {
@@ -33,6 +35,7 @@ export default function AdminLoginScreen() {
     setError('');
 
     try {
+
       const { data, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
         password,
@@ -41,15 +44,32 @@ export default function AdminLoginScreen() {
       if (authError) {
         setError('Invalid email or password.');
         setLoading(false);
-      } else if (data.session) {
-        // Navigate directly — don't rely on layout re-render
-        router.replace('/(admin)' as any);
+        return;
+      }
+
+      if (data.session) {
+        // ── Verify admin privileges ──
+        const user = data.session.user;
+        const isAdmin =
+          user.user_metadata?.is_admin === true ||
+          user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+        if (!isAdmin) {
+          // Sign out immediately — this is not an admin account
+          await supabase.auth.signOut();
+          setError('Access denied. This portal is for admins only.');
+          setLoading(false);
+          return;
+        }
+
+        // Admin verified — onAuthStateChange in _layout.tsx will handle navigation to dashboard
       }
     } catch {
       setError('Something went wrong. Please try again.');
       setLoading(false);
     }
   };
+
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -79,7 +99,7 @@ export default function AdminLoginScreen() {
               <Text style={styles.fieldLabel}>Email</Text>
               <TextInput
                 style={styles.input}
-                placeholder="admin@lumora.com"
+                placeholder="admin@gmail.com"
                 placeholderTextColor="#A09080"
                 keyboardType="email-address"
                 autoCapitalize="none"

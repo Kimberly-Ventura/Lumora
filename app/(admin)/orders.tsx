@@ -4,6 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { AdminTheme } from '@/constants/theme';
+import { useNotification } from '@/context/NotificationContext';
+import { Skeleton } from '@/components/Skeleton';
 
 type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
 
@@ -43,7 +45,7 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
   cancelled: { bg: '#FDEAE8', text: '#A1261B', label: 'Cancelled' },
 };
 
-const FILTERS = ['All', 'Pending', 'Processing', 'Shipped', 'Delivered'];
+const FILTERS = ['All', 'Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled', 'Archived'];
 
 export default function AdminOrdersScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -53,6 +55,10 @@ export default function AdminOrdersScreen() {
   
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [shippingPrompt, setShippingPrompt] = useState(false);
+  const [trackingNumber, setTrackingNumber] = useState('');
+  const [archivedIds, setArchivedIds] = useState<Set<string>>(new Set());
+  const { addToast } = useNotification();
   
   const isWeb = Platform.OS === 'web';
   const { width } = useWindowDimensions();
@@ -109,12 +115,24 @@ export default function AdminOrdersScreen() {
           .select('*')
           .in('order_id', orderIds);
           
-        if (itemsData) {
+        if (itemsData && itemsData.length > 0) {
+          const productIds = [...new Set(itemsData.map(i => i.product_id).filter(Boolean))];
+          let productsMap: Record<string, any> = {};
+          if (productIds.length > 0) {
+            const { data: productsData } = await supabase
+              .from('products')
+              .select('id, name')
+              .in('id', productIds);
+            if (productsData) {
+              productsMap = Object.fromEntries(productsData.map(p => [p.id, p]));
+            }
+          }
+
           itemsData.forEach(item => {
             if (!itemsMap[item.order_id]) itemsMap[item.order_id] = [];
             itemsMap[item.order_id].push({
               ...item,
-              products: { name: 'Store Item' } // Mock product name since products table has no items
+              products: productsMap[item.product_id] || { name: 'Unknown Product' }
             });
           });
         }
@@ -134,44 +152,105 @@ export default function AdminOrdersScreen() {
     }
   };
 
-  const updateOrderStatus = async (id: string, newStatus: string) => {
+  const updateOrderStatus = async (id: string, newStatus: string, tracking?: string) => {
     try {
+      const updatePayload: any = { status: newStatus.toLowerCase() };
+      if (tracking) {
+        updatePayload.tracking_number = tracking;
+      }
+
       const { error } = await supabase
         .from('orders')
-        .update({ status: newStatus.toLowerCase() })
+        .update(updatePayload)
         .eq('id', id);
         
       if (error) throw error;
+
+      // If order was cancelled, stock restoration is now handled automatically
+      // at the database level by the 'trg_order_status_updated' trigger.
+      // This eliminates RLS errors and ensures consistency across all clients.
       
       // Update local state for immediate feedback
       setOrders(prev => prev.map(o => o.id === id ? { ...o, status: newStatus.toLowerCase() as OrderStatus } : o));
       if (selectedOrder && selectedOrder.id === id) {
         setSelectedOrder({ ...selectedOrder, status: newStatus.toLowerCase() as OrderStatus });
       }
+
+      // Notify customer
+      const targetOrder = orders.find(o => o.id === id);
+      if (targetOrder && targetOrder.customer_id) {
+        const shortId = `#ORD-${id.substring(0, 4).toUpperCase()}`;
+        
+        let desc = `Your order ${shortId} has been marked as ${newStatus}.`;
+        if (newStatus === 'shipped' && tracking) {
+          desc = `Your order ${shortId} has been shipped. Tracking: ${tracking}`;
+        }
+        
+        await supabase.from('customer_notifications').insert({
+          user_id: targetOrder.customer_id,
+          type: 'order_update',
+          title: `Order ${newStatus.charAt(0).toUpperCase() + newStatus.slice(1)}`,
+          description: desc,
+          is_read: false
+        });
+      }
+      addToast({ type: 'success', title: 'Status Updated', message: `Order marked as ${newStatus}` });
     } catch (err) {
       console.error('Error updating status:', err);
+      addToast({ type: 'error', title: 'Error', message: 'Failed to update order status' });
     }
+  };
+
+  const archiveOrder = (id: string) => {
+    setArchivedIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
+
+  const restoreOrder = (id: string) => {
+    setArchivedIds(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   };
 
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
-      const matchesFilter = activeFilter === 'All' || o.status.toLowerCase() === activeFilter.toLowerCase();
+      const isArchived = archivedIds.has(o.id);
+      
+      if (activeFilter === 'Archived') {
+        if (!isArchived) return false;
+      } else {
+        if (isArchived) return false;
+        if (activeFilter !== 'All' && o.status.toLowerCase() !== activeFilter.toLowerCase()) {
+          return false;
+        }
+      }
+
       const searchLower = search.toLowerCase();
       const customerName = o.profiles?.username?.toLowerCase() || 'guest';
       const orderId = o.id.toLowerCase();
-      const matchesSearch = customerName.includes(searchLower) || orderId.includes(searchLower);
-      return matchesFilter && matchesSearch;
+      const shortId = `#ord-${o.id.substring(0, 4).toLowerCase()}`;
+      const matchesSearch = customerName.includes(searchLower) || orderId.includes(searchLower) || shortId.includes(searchLower);
+      return matchesSearch;
     });
-  }, [orders, search, activeFilter]);
+  }, [orders, search, activeFilter, archivedIds]);
 
   const stats = useMemo(() => {
+    const activeOrders = orders.filter(o => !archivedIds.has(o.id));
     return {
-      total: orders.length,
-      pending: orders.filter(o => o.status === 'pending').length,
-      shipped: orders.filter(o => o.status === 'shipped').length,
-      revenue: orders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0)
+      total: activeOrders.length,
+      pending: activeOrders.filter(o => o.status === 'pending').length,
+      processing: activeOrders.filter(o => o.status === 'processing').length,
+      shipped: activeOrders.filter(o => o.status === 'shipped').length,
+      delivered: activeOrders.filter(o => o.status === 'delivered').length,
+      cancelled: activeOrders.filter(o => o.status === 'cancelled').length,
+      revenue: activeOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0)
     };
-  }, [orders]);
+  }, [orders, archivedIds]);
 
   const formatCurrency = (val: number) => {
     return '₱' + val.toLocaleString('en-PH', { maximumFractionDigits: 0 });
@@ -187,6 +266,8 @@ export default function AdminOrdersScreen() {
 
   const openOrderDetails = (order: Order) => {
     setSelectedOrder(order);
+    setShippingPrompt(false);
+    setTrackingNumber('');
     setModalVisible(true);
   };
 
@@ -201,6 +282,7 @@ export default function AdminOrdersScreen() {
 
   const renderOrderCard = ({ item }: { item: Order }) => {
     const itemCount = item.order_items?.length || 0;
+    const productNames = item.order_items?.map(oi => oi.products?.name || 'Unknown Product').join(', ') || 'No Products';
     return (
       <TouchableOpacity style={styles.mobileCard} onPress={() => openOrderDetails(item)} activeOpacity={0.7}>
         <View style={styles.cardHeader}>
@@ -210,9 +292,30 @@ export default function AdminOrdersScreen() {
         <Text style={styles.cardCustomer}>
           {item.profiles?.username || 'Guest'} · {itemCount} item{itemCount !== 1 ? 's' : ''}
         </Text>
+        <Text style={styles.cardProducts} numberOfLines={1}>
+          {productNames}
+        </Text>
         <View style={styles.cardFooter}>
           <Text style={styles.cardTotal}>{formatCurrency(item.total_amount)}</Text>
-          <StatusBadge status={item.status} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            {activeFilter === 'Archived' ? (
+              <TouchableOpacity onPress={() => restoreOrder(item.id)}>
+                <Ionicons name="reload-outline" size={20} color={AdminTheme.secondary} />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity 
+                disabled={item.status !== 'delivered' && item.status !== 'cancelled'}
+                onPress={() => archiveOrder(item.id)}
+              >
+                <Ionicons 
+                  name="archive-outline" 
+                  size={20} 
+                  color={(item.status === 'delivered' || item.status === 'cancelled') ? "#7A6A5A" : "#DCD5CC"} 
+                />
+              </TouchableOpacity>
+            )}
+            <StatusBadge status={item.status} />
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -220,10 +323,13 @@ export default function AdminOrdersScreen() {
 
   const renderOrderRow = ({ item }: { item: Order }) => {
     const itemCount = item.order_items?.length || 0;
+    const productNames = item.order_items?.map(oi => oi.products?.name || 'Unknown Product').join(', ') || 'No Products';
+
     return (
       <View style={styles.tableRow}>
         <Text style={[styles.tableCell, styles.cellId]}>{getShortId(item.id)}</Text>
         <Text style={[styles.tableCell, styles.cellCustomer]} numberOfLines={1}>{item.profiles?.username || 'Guest'}</Text>
+        <Text style={[styles.tableCell, styles.cellProducts]} numberOfLines={1}>{productNames}</Text>
         <Text style={[styles.tableCell, styles.cellItems]}>{itemCount} item{itemCount !== 1 ? 's' : ''}</Text>
         <Text style={[styles.tableCell, styles.cellTotal]}>{formatCurrency(item.total_amount)}</Text>
         <Text style={[styles.tableCell, styles.cellDate]}>{formatDate(item.created_at)}</Text>
@@ -234,6 +340,27 @@ export default function AdminOrdersScreen() {
           <TouchableOpacity style={styles.updateBtn} onPress={() => openOrderDetails(item)}>
             <Text style={styles.updateBtnText}>Update</Text>
           </TouchableOpacity>
+        </View>
+        <View style={styles.cellArchive}>
+          {activeFilter === 'Archived' ? (
+            <TouchableOpacity style={[styles.updateBtn, { borderColor: AdminTheme.secondary }]} onPress={() => restoreOrder(item.id)}>
+              <Text style={[styles.updateBtnText, { color: AdminTheme.secondary }]}>Restore</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity 
+              style={[
+                styles.updateBtn, 
+                { borderColor: (item.status === 'delivered' || item.status === 'cancelled') ? '#7A6A5A' : '#EAE4DC' }
+              ]} 
+              disabled={item.status !== 'delivered' && item.status !== 'cancelled'}
+              onPress={() => archiveOrder(item.id)}
+            >
+              <Text style={[
+                styles.updateBtnText, 
+                { color: (item.status === 'delivered' || item.status === 'cancelled') ? '#7A6A5A' : '#A09080' }
+              ]}>Archive</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
@@ -250,26 +377,49 @@ export default function AdminOrdersScreen() {
 
       {/* STATS CARDS */}
       <View style={isMobile ? [styles.statsContainer, { flexWrap: 'wrap' }] : styles.statsContainer}>
-        <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
-          <Text style={styles.statLabel}>Total orders</Text>
-          <Text style={styles.statValue}>{stats.total.toLocaleString()}</Text>
-        </View>
-        <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
-          <Text style={styles.statLabel}>Pending</Text>
-          <Text style={[styles.statValue, { color: '#B37A17' }]}>{stats.pending}</Text>
-        </View>
-        <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
-          <Text style={styles.statLabel}>Shipped</Text>
-          <Text style={[styles.statValue, { color: AdminTheme.accent }]}>{stats.shipped}</Text>
-        </View>
-        <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
-          <Text style={styles.statLabel}>Revenue</Text>
-          <Text style={[styles.statValue, { color: AdminTheme.accent }]}>
-            {stats.revenue >= 1000000 
-              ? `₱${(stats.revenue / 1000000).toFixed(1)}M` 
-              : formatCurrency(stats.revenue)}
-          </Text>
-        </View>
+        {loading ? (
+          [1, 2, 3, 4, 5, 6, 7].map(key => (
+            <View key={`stat-skeleton-${key}`} style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
+              <Skeleton width="60%" height={12} style={{ marginBottom: 8 }} />
+              <Skeleton width="40%" height={24} />
+            </View>
+          ))
+        ) : (
+          <>
+            <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
+              <Text style={styles.statLabel}>Total orders</Text>
+              <Text style={styles.statValue}>{stats.total.toLocaleString()}</Text>
+            </View>
+            <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
+              <Text style={styles.statLabel}>Pending</Text>
+              <Text style={[styles.statValue, { color: '#B37A17' }]}>{stats.pending}</Text>
+            </View>
+            <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
+              <Text style={styles.statLabel}>Processing</Text>
+              <Text style={[styles.statValue, { color: '#1A3F8A' }]}>{stats.processing}</Text>
+            </View>
+            <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
+              <Text style={styles.statLabel}>Shipped</Text>
+              <Text style={[styles.statValue, { color: AdminTheme.accent }]}>{stats.shipped}</Text>
+            </View>
+            <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
+              <Text style={styles.statLabel}>Delivered</Text>
+              <Text style={[styles.statValue, { color: '#1B5E1B' }]}>{stats.delivered}</Text>
+            </View>
+            <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
+              <Text style={styles.statLabel}>Cancelled</Text>
+              <Text style={[styles.statValue, { color: '#A1261B' }]}>{stats.cancelled}</Text>
+            </View>
+            <View style={isMobile ? [styles.statCard, { minWidth: '45%' }] : styles.statCard}>
+              <Text style={styles.statLabel}>Revenue</Text>
+              <Text style={[styles.statValue, { color: AdminTheme.accent }]}>
+                {stats.revenue >= 1000000 
+                  ? `₱${(stats.revenue / 1000000).toFixed(1)}M` 
+                  : formatCurrency(stats.revenue)}
+              </Text>
+            </View>
+          </>
+        )}
       </View>
 
       {/* SEARCH & FILTERS */}
@@ -301,8 +451,10 @@ export default function AdminOrdersScreen() {
 
       {/* LIST OR TABLE */}
       {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={AdminTheme.accent} />
+        <View style={{ flex: 1, padding: 16 }}>
+          {[1, 2, 3, 4, 5, 6].map(key => (
+            <Skeleton key={`list-skeleton-${key}`} width="100%" height={70} borderRadius={8} style={{ marginBottom: 12 }} />
+          ))}
         </View>
       ) : filteredOrders.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -321,11 +473,13 @@ export default function AdminOrdersScreen() {
           <View style={styles.tableHeaderRow}>
             <Text style={[styles.tableHeaderCell, styles.cellId]}>ORDER ID</Text>
             <Text style={[styles.tableHeaderCell, styles.cellCustomer]}>CUSTOMER</Text>
+            <Text style={[styles.tableHeaderCell, styles.cellProducts]}>PRODUCTS</Text>
             <Text style={[styles.tableHeaderCell, styles.cellItems]}>ITEMS</Text>
             <Text style={[styles.tableHeaderCell, styles.cellTotal]}>TOTAL</Text>
             <Text style={[styles.tableHeaderCell, styles.cellDate]}>DATE</Text>
             <Text style={[styles.tableHeaderCell, styles.cellStatus]}>STATUS</Text>
-            <Text style={[styles.tableHeaderCell, styles.cellAction]}>ACTION</Text>
+            <Text style={[styles.tableHeaderCell, styles.cellActionHeader]}>ACTION</Text>
+            <Text style={[styles.tableHeaderCell, styles.cellArchiveHeader]}>ARCHIVE</Text>
           </View>
           <FlatList
             data={filteredOrders}
@@ -356,6 +510,17 @@ export default function AdminOrdersScreen() {
                     <Text style={styles.sectionTitle}>Customer Details</Text>
                     <Text style={styles.detailText}>{selectedOrder.profiles?.username || 'Guest'}</Text>
                     {selectedOrder.profiles?.email && <Text style={styles.detailTextMuted}>{selectedOrder.profiles.email}</Text>}
+                  </View>
+
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Shipping Address</Text>
+                    <Text style={styles.detailTextMuted}>123 Rizal St, Olongapo City, Zambales, 2200</Text>
+                  </View>
+
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Payment Info</Text>
+                    <Text style={styles.detailTextMuted}>Method: GCash</Text>
+                    <Text style={styles.detailTextMuted}>Status: Paid</Text>
                   </View>
 
                   <View style={styles.section}>
@@ -390,13 +555,42 @@ export default function AdminOrdersScreen() {
                       <Text style={styles.actionBtnText}>Mark as Processing</Text>
                     </TouchableOpacity>
                     
-                    <TouchableOpacity 
-                      style={[styles.actionBtn, selectedOrder.status === 'shipped' && styles.actionBtnDisabled]}
-                      disabled={selectedOrder.status === 'shipped'}
-                      onPress={() => updateOrderStatus(selectedOrder.id, 'shipped')}
-                    >
-                      <Text style={styles.actionBtnText}>Mark as Shipped</Text>
-                    </TouchableOpacity>
+                    {shippingPrompt ? (
+                      <View style={styles.trackingContainer}>
+                        <TextInput 
+                          style={styles.trackingInput} 
+                          placeholder="Enter tracking number"
+                          placeholderTextColor={AdminTheme.textMuted}
+                          value={trackingNumber}
+                          onChangeText={setTrackingNumber}
+                        />
+                        <View style={styles.trackingActions}>
+                          <TouchableOpacity 
+                            style={[styles.actionBtn, { flex: 1, backgroundColor: AdminTheme.accent }]}
+                            onPress={() => {
+                              updateOrderStatus(selectedOrder.id, 'shipped', trackingNumber);
+                              setShippingPrompt(false);
+                            }}
+                          >
+                            <Text style={[styles.actionBtnText, { color: '#FFF' }]}>Confirm</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity 
+                            style={[styles.actionBtn, { flex: 1 }]}
+                            onPress={() => setShippingPrompt(false)}
+                          >
+                            <Text style={styles.actionBtnText}>Cancel</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                      <TouchableOpacity 
+                        style={[styles.actionBtn, selectedOrder.status === 'shipped' && styles.actionBtnDisabled]}
+                        disabled={selectedOrder.status === 'shipped'}
+                        onPress={() => setShippingPrompt(true)}
+                      >
+                        <Text style={styles.actionBtnText}>Mark as Shipped</Text>
+                      </TouchableOpacity>
+                    )}
                     
                     <TouchableOpacity 
                       style={[styles.actionBtn, selectedOrder.status === 'delivered' && styles.actionBtnDisabled]}
@@ -404,6 +598,13 @@ export default function AdminOrdersScreen() {
                       onPress={() => updateOrderStatus(selectedOrder.id, 'delivered')}
                     >
                       <Text style={styles.actionBtnText}>Mark as Delivered</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={[styles.actionBtn, { borderColor: '#FDEAE8', backgroundColor: '#FDEAE8' }]}
+                      onPress={() => updateOrderStatus(selectedOrder.id, 'cancelled')}
+                    >
+                      <Text style={[styles.actionBtnText, { color: '#A1261B' }]}>Cancel Order</Text>
                     </TouchableOpacity>
                   </View>
                 </ScrollView>
@@ -550,6 +751,12 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans-Regular',
     fontSize: 14,
     color: '#2B1F14',
+    marginBottom: 4,
+  },
+  cardProducts: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 13,
+    color: '#7A6A5A',
     marginBottom: 12,
   },
   cardFooter: {
@@ -602,13 +809,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#2B1F14',
   },
-  cellId: { flex: 1.5, fontFamily: 'Inter-SemiBold' },
-  cellCustomer: { flex: 2 },
-  cellItems: { flex: 1 },
+  cellId: { flex: 1, fontFamily: 'Inter-SemiBold' },
+  cellCustomer: { flex: 1.2 },
+  cellProducts: { flex: 3.5 },
+  cellItems: { flex: 0.8 },
   cellTotal: { flex: 1, fontFamily: 'Inter-SemiBold' },
-  cellDate: { flex: 1.5 },
-  cellStatus: { flex: 1.5 },
-  cellAction: { flex: 1, alignItems: 'flex-end' },
+  cellDate: { flex: 1.2 },
+  cellStatus: { flex: 1.2 },
+  cellActionHeader: { flex: 1, textAlign: 'center' },
+  cellAction: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  cellArchiveHeader: { flex: 1, textAlign: 'center' },
+  cellArchive: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   
   updateBtn: {
     borderWidth: 1,
@@ -776,5 +987,24 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans-Regular',
     fontSize: 15,
     color: '#C9A96E',
+  },
+  trackingContainer: {
+    gap: 8,
+    marginBottom: 8,
+  },
+  trackingInput: {
+    fontFamily: 'DMSans-Regular',
+    fontSize: 15,
+    color: '#2B1F14',
+    borderWidth: 1,
+    borderColor: 'rgba(43,31,20,0.12)',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFF',
+  },
+  trackingActions: {
+    flexDirection: 'row',
+    gap: 12,
   }
 });

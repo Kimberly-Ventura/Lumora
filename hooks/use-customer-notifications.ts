@@ -53,17 +53,29 @@ export function useCustomerNotifications(userId: string | null) {
       return;
     }
 
-    // Have a userId — fetch immediately then poll
+    // Have a userId — fetch immediately then setup real-time subscription
     setLoading(true);
     fetchNotifications(userId);
 
-    const interval = setInterval(() => {
-      fetchNotifications(userId);
-    }, POLL_INTERVAL_MS);
+    const channel = supabase
+      .channel(`customer_notifications_${userId}_${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'customer_notifications',
+          filter: `user_id=eq.${userId}`,
+        },
+        (_payload) => {
+          fetchNotifications(userId);
+        }
+      )
+      .subscribe();
 
     return () => {
       mountedRef.current = false;
-      clearInterval(interval);
+      supabase.removeChannel(channel);
     };
   }, [userId, fetchNotifications]);
 

@@ -15,11 +15,15 @@ import {
   useCustomerNotifications,
   type CustomerNotification,
 } from '@/hooks/use-customer-notifications';
+import { Skeleton } from '@/components/Skeleton';
 
 // ─── Relative time ────────────────────────────────────────────────────────────
 
 function relativeTime(iso: string): string {
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  // Supabase returns timestamps without timezone suffix — append Z so JS
+  // treats them as UTC instead of local time (avoids the +8h offset bug).
+  const utcIso = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z';
+  const diff = Math.floor((Date.now() - new Date(utcIso).getTime()) / 1000);
   if (diff < 60) return 'Just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -38,6 +42,39 @@ function NotificationRow({
 }) {
   const isOrder = item.type === 'order_update';
 
+  let iconName = 'notifications-outline' as any;
+  let iconColor = '#8A9E85';
+  let bgColor = '#8A9E851A';
+
+  if (isOrder) {
+    const titleLower = item.title.toLowerCase();
+    if (titleLower.includes('placed')) {
+      iconName = 'cube-outline';
+      iconColor = '#C9A96E';
+      bgColor = '#C9A96E1A';
+    } else if (titleLower.includes('processing')) {
+      iconName = 'time-outline';
+      iconColor = '#1A3F8A';
+      bgColor = '#1A3F8A1A';
+    } else if (titleLower.includes('shipped')) {
+      iconName = 'airplane-outline';
+      iconColor = '#7A4F00';
+      bgColor = '#7A4F001A';
+    } else if (titleLower.includes('delivered')) {
+      iconName = 'checkmark-circle-outline';
+      iconColor = '#1B5E1B';
+      bgColor = '#1B5E1B1A';
+    } else if (titleLower.includes('cancelled')) {
+      iconName = 'close-circle-outline';
+      iconColor = '#A1261B';
+      bgColor = '#A1261B1A';
+    } else {
+      iconName = 'cart-outline';
+      iconColor = '#C9A96E';
+      bgColor = '#C9A96E1A';
+    }
+  }
+
   return (
     <Pressable
       style={({ pressed }) => [
@@ -48,11 +85,11 @@ function NotificationRow({
       onPress={() => onPress(item)}
       accessibilityRole="button"
     >
-      <View style={[styles.iconWrap, { backgroundColor: isOrder ? '#C9A96E1A' : '#8A9E851A' }]}>
+      <View style={[styles.iconWrap, { backgroundColor: bgColor }]}>
         <Ionicons
-          name={isOrder ? 'cart-outline' : 'pricetag-outline'}
+          name={iconName}
           size={20}
-          color={isOrder ? '#C9A96E' : '#8A9E85'}
+          color={iconColor}
         />
       </View>
 
@@ -99,10 +136,36 @@ export default function NotificationsScreen() {
     useCustomerNotifications(resolvedUserId);
 
   const handlePress = useCallback(
-    async (item: CustomerNotification) => {
-      await markAsRead(item.id);
+    (item: CustomerNotification) => {
+      // Fire-and-forget to make UI instantly responsive
+      markAsRead(item.id);
+
       if (item.type === 'order_update') {
-        router.push('/(tabs)/profile' as any);
+        const match = item.description.match(/#ORD-([A-Z0-9]{4})/i);
+        if (match) {
+          const shortId = match[1].toLowerCase();
+          (async () => {
+            try {
+              const { data } = await supabase
+                .from('orders')
+                .select('id')
+                .ilike('id', `${shortId}%`)
+                .single();
+              if (data && data.id) {
+                router.push(`/order/${data.id}` as any);
+              } else {
+                router.push('/order-history' as any);
+              }
+            } catch {
+              router.push('/order-history' as any);
+            }
+          })();
+          return;
+        }
+        router.push('/order-history' as any);
+      } else if (item.type === 'promotion') {
+        // Handle new product / sale notifications
+        router.push('/product-list' as any);
       }
     },
     [markAsRead, router]
@@ -149,15 +212,26 @@ export default function NotificationsScreen() {
           </Pressable>
         </View>
       ) : isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color="#C9A96E" />
+        <View style={styles.list}>
+          {[1, 2, 3, 4, 5].map(key => (
+            <View key={`skeleton-${key}`} style={styles.row}>
+              <View style={[styles.iconWrap, { backgroundColor: 'transparent' }]}>
+                <Skeleton width={40} height={40} borderRadius={20} />
+              </View>
+              <View style={styles.textWrap}>
+                <Skeleton width="60%" height={14} style={{ marginBottom: 4 }} />
+                <Skeleton width="90%" height={12} style={{ marginBottom: 4 }} />
+                <Skeleton width={40} height={10} />
+              </View>
+            </View>
+          ))}
         </View>
       ) : notifications.length === 0 ? (
         <View style={styles.center}>
           <Ionicons name="notifications-off-outline" size={56} color="#C8BAA8" />
           <Text style={styles.emptyTitle}>No notifications yet</Text>
           <Text style={styles.emptySubtitle}>
-            We'll let you know when something happens with your orders.
+            We&apos;ll let you know when something happens with your orders.
           </Text>
         </View>
       ) : (

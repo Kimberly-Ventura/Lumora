@@ -17,7 +17,6 @@ import { Header } from '@/components/Header';
 import { FooterHero } from '@/components/FooterHero';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Product3DViewer } from '@/components/Product3DViewer';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getMobileQRUrl } from '@/lib/qrHelper';
@@ -53,11 +52,10 @@ export default function ShopScreen() {
   const [activeCategory, setActiveCategory] = useState('All');
   const [selectedProduct, setSelectedProduct] = useState(PRODUCTS[1]); // Default to Vero Modular Chair
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [arModalVisible, setArModalVisible] = useState(false);
   const [currentUrl, setCurrentUrl] = useState('http://localhost:8081/shop');
-  const [showcaseColor, setShowcaseColor] = useState('#ORIGINAL');
 
   const [dbProducts, setDbProducts] = useState<any[]>([]);
+  const [categories, setCategories] = useState<string[]>(CATEGORIES);
 
   const fetchDbProducts = async () => {
     try {
@@ -73,19 +71,29 @@ export default function ShopScreen() {
       }
 
       if (data) {
-        const mapped = data.map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          brand: item.categories?.name || 'Lumora Design',
-          price: `₱${parseFloat(item.price).toLocaleString('en-US')}`,
-          image: item.image_url ? { uri: item.image_url } : require('@/assets/images/armchair_clean.png'),
-          category: item.categories?.name || 'Chair',
-          rating: 4.8,
-          color: '#D09252',
-          modelPath: item.model_url || undefined,
-          description: item.description || '',
-          isDbProduct: true
-        }));
+        const mapped = data.map((item: any) => {
+          const numericPrice = parseFloat(item.price);
+          const isOnSale = item.on_sale && item.discount_percentage && item.discount_percentage > 0;
+          const salePrice = isOnSale ? numericPrice * (1 - item.discount_percentage / 100) : numericPrice;
+          return {
+            id: item.id,
+            name: item.name,
+            brand: item.categories?.name || 'Lumora Design',
+            price: `₱${numericPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            originalPrice: isOnSale ? `₱${numericPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+            salePrice: isOnSale ? `₱${salePrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+            onSale: isOnSale,
+            discount: isOnSale ? `${item.discount_percentage}% OFF` : null,
+            stock: item.stock !== undefined ? item.stock : 15,
+            image: item.image_url ? { uri: item.image_url } : require('@/assets/images/armchair_clean.png'),
+            category: item.categories?.name || 'Chair',
+            rating: 4.8,
+            color: '#D09252',
+            modelPath: item.model_url || undefined,
+            description: item.description || '',
+            isDbProduct: true
+          };
+        });
         setDbProducts(mapped);
       }
     } catch (err) {
@@ -99,9 +107,44 @@ export default function ShopScreen() {
     }, [])
   );
 
+  const fetchCategories = async () => {
+    try {
+      const { data, error } = await supabase.from('categories').select('name');
+      if (data && !error) {
+        const names = data.map((c: any) => c.name);
+        const uniqueNames = ['All', ...Array.from(new Set(names))];
+        setCategories(uniqueNames);
+      }
+    } catch (err) {
+      console.error('Error fetching categories in shop:', err);
+    }
+  };
+
   useEffect(() => {
-    setShowcaseColor('#ORIGINAL');
-  }, [selectedProduct]);
+    fetchCategories();
+    const catChannel = supabase
+      .channel(`shop-categories-changes-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => {
+        fetchCategories();
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(catChannel);
+    };
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`shop-products-changes-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        fetchDbProducts();
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
 
   const [isLocalhostWeb, setIsLocalhostWeb] = useState(false);
   const [isEditingIp, setIsEditingIp] = useState(false);
@@ -142,12 +185,30 @@ export default function ShopScreen() {
 
   const allProducts = dbProducts;
 
-  const filteredProducts = allProducts.filter(product => {
-    const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          product.brand.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = activeCategory === 'All' || product.category.toLowerCase() === activeCategory.toLowerCase();
-    return matchesSearch && matchesCategory;
-  });
+  const filteredProducts = React.useMemo(() => {
+    const filtered = allProducts.filter(product => {
+      const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            product.brand.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory = activeCategory === 'All' || product.category.toLowerCase() === activeCategory.toLowerCase();
+      return matchesSearch && matchesCategory;
+    });
+
+    return [...filtered].sort((a, b) => {
+      const getStockRank = (stock: number) => {
+        if (stock === 0) return 2;
+        if (stock < 10) return 1;
+        return 0;
+      };
+      
+      const rankA = getStockRank(a.stock !== undefined ? a.stock : 15);
+      const rankB = getStockRank(b.stock !== undefined ? b.stock : 15);
+      
+      if (rankA !== rankB) {
+        return rankB - rankA;
+      }
+      return 0;
+    });
+  }, [allProducts, searchQuery, activeCategory]);
 
   const { width: currentWidth } = useWindowDimensions();
   const isMobile = currentWidth < 768;
@@ -179,69 +240,6 @@ export default function ShopScreen() {
               <ThemedText style={styles.title}>Understated Masterpieces</ThemedText>
             </View>
 
-            {/* 3D AR Interactive Showcase Box */}
-            <View style={[styles.showcaseBox, { backgroundColor: '#FFFFFF' }]}>
-              <View style={[styles.showcaseHeader, isMobile && { flexDirection: 'column', alignItems: 'stretch', gap: 14 }]}>
-                <View style={{ flex: isMobile ? undefined : 1 }}>
-                  <ThemedText style={styles.showcaseTitle}>{selectedProduct.name}</ThemedText>
-                  <ThemedText style={styles.showcaseSubtitle}>Interactive 3D Preview</ThemedText>
-                </View>
-
-                <View style={[
-                  isMobile ? { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 } : { flexDirection: 'row', alignItems: 'center' }
-                ]}>
-                  {/* 3D Color Swapping (Only shown if modelPath is present) */}
-                  {(selectedProduct as any).modelPath && (
-                    <View style={[styles.showcaseSwatches, { marginRight: isMobile ? 0 : 20 }]}>
-                      {SHOWCASE_SWATCHES.map((swatch, idx) => {
-                        const isSelected = showcaseColor === swatch.hex;
-                        return (
-                          <Pressable
-                            key={idx}
-                            style={[
-                              styles.showcaseSwatchCircle,
-                              { backgroundColor: swatch.displayColor || swatch.hex },
-                              isSelected && styles.showcaseSwatchCircleSelected
-                            ]}
-                            onPress={() => setShowcaseColor(swatch.hex)}
-                          />
-                        );
-                      })}
-                    </View>
-                  )}
-
-                  {Platform.OS !== 'web' ? (
-                    <Pressable 
-                      style={styles.arBadge}
-                       onPress={() => setArModalVisible(true)}
-                    >
-                      <Ionicons name="cube-outline" size={16} color="#FFF" />
-                      <ThemedText style={styles.arBadgeText}>VIEW IN AR</ThemedText>
-                    </Pressable>
-                  ) : (
-                    <View style={[styles.arBadge, { backgroundColor: '#F6F1EB', borderWidth: 1, borderColor: '#E7E0D8' }]}>
-                      <Ionicons name="phone-portrait-outline" size={12} color="#888" />
-                      <ThemedText style={[styles.arBadgeText, { color: '#888' }]}>MOBILE AR ONLY</ThemedText>
-                    </View>
-                  )}
-                </View>
-              </View>
-
-              <View style={[styles.canvasContainer, { height: isMobile ? 260 : 480 }]}>
-                <Product3DViewer 
-                  modelPath={(selectedProduct as any).modelPath} 
-                  customColor={showcaseColor} 
-                  autoRotate={true}
-                  enableZoom={false}
-                  enablePan={false}
-                />
-              </View>
-
-              {/* Dynamic 3D Example Disclaimer */}
-              <ThemedText style={styles.disclaimerText}>
-                *3D showcase is for aesthetic representation only; actual materials and finishes are customized post-purchase.
-              </ThemedText>
-            </View>
 
             {/* Catalog Product Grid */}
             <View style={styles.gridSection}>
@@ -265,6 +263,20 @@ export default function ShopScreen() {
                       <View style={styles.productImageContainer}>
                         <Image source={product.image} style={styles.productImage} resizeMode="contain" />
                         
+                        {product.stock === 0 ? (
+                          <View style={styles.shopTagOut}>
+                            <ThemedText style={styles.shopTagTextOut}>OUT OF STOCK</ThemedText>
+                          </View>
+                        ) : product.stock < 10 ? (
+                          <View style={styles.shopTagLow}>
+                            <ThemedText style={styles.shopTagTextLow}>LOW STOCK: {product.stock}</ThemedText>
+                          </View>
+                        ) : product.onSale ? (
+                          <View style={styles.shopTagSale}>
+                            <ThemedText style={styles.shopTagTextSale}>{product.discount || 'SALE'}</ThemedText>
+                          </View>
+                        ) : null}
+
                         <Pressable 
                           style={[styles.favBadge, { backgroundColor: 'rgba(255,255,255,0.85)' }]}
                           onPress={() => toggleFavorite(product.id)}
@@ -286,9 +298,20 @@ export default function ShopScreen() {
                         </ThemedText>
                         
                         <View style={styles.productFooter}>
-                          <ThemedText style={styles.productPrice}>
-                            {product.price}
-                          </ThemedText>
+                          {product.onSale ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
+                              <ThemedText style={[styles.productPrice, { color: '#DC2626', marginRight: 4 }]}>
+                                {product.salePrice}
+                              </ThemedText>
+                              <ThemedText style={[styles.productPrice, { fontSize: 10, textDecorationLine: 'line-through', color: '#999' }]}>
+                                {product.price}
+                              </ThemedText>
+                            </View>
+                          ) : (
+                            <ThemedText style={styles.productPrice}>
+                              {product.price}
+                            </ThemedText>
+                          )}
                           <Pressable 
                             style={styles.addCartBtn}
                             onPress={() => router.push(`/product/${product.id}` as any)}
@@ -327,7 +350,7 @@ export default function ShopScreen() {
             <View style={[styles.sidebarCard, { backgroundColor: '#FFFFFF', marginTop: 20 }]}>
               <ThemedText style={styles.sidebarSectionTitle}>Categories</ThemedText>
               <View style={styles.filterList}>
-                {CATEGORIES.map(cat => {
+                {categories.map(cat => {
                   const isActive = activeCategory.toLowerCase() === cat.toLowerCase();
                   return (
                     <Pressable
@@ -353,69 +376,6 @@ export default function ShopScreen() {
               </View>
             </View>
 
-            {/* Simulated AR Helper Guide (Shows QR Code on Web) */}
-            <View style={[styles.sidebarCard, { backgroundColor: '#E7E0D8', marginTop: 20 }]}>
-              <Ionicons name="camera-outline" size={24} color="#111" />
-              <ThemedText style={styles.arGuideTitle}>Bring Room to Life</ThemedText>
-              <ThemedText style={styles.arGuideText}>
-                {Platform.OS === 'web' 
-                  ? "Scan this QR code with your mobile camera to instantly open this shop on your phone and launch the immersive AR placement simulation!"
-                  : "Use our dynamic AR placement simulation tool to place premium designs directly inside your home workspace!"
-                }
-              </ThemedText>
-              {Platform.OS === 'web' ? (
-                <View style={styles.qrSection}>
-                  <View style={styles.qrBorder}>
-                    <Image 
-                      source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=111111&bgcolor=F6F1EB&data=${encodeURIComponent(currentUrl)}` }} 
-                      style={styles.qrCodeImage}
-                    />
-                  </View>
-                  <View style={styles.qrLabelRow}>
-                    <Ionicons name="scan-outline" size={14} color="#555" />
-                    <ThemedText style={styles.qrLabelText}>SCAN WITH MOBILE</ThemedText>
-                  </View>
-                  <ThemedText style={styles.wifiTip}>Connect phone to the same Wi-Fi network</ThemedText>
-
-                  {/* Dynamic IP Configuration Pill (Web Localhost Only) */}
-                  {isLocalhostWeb && (
-                    <View style={styles.ipPillContainer}>
-                      {isEditingIp ? (
-                        <View style={styles.ipInputRow}>
-                          <TextInput
-                            style={styles.ipInput}
-                            placeholder="e.g. 192.168.1.15"
-                            placeholderTextColor="#999"
-                            value={tempIp}
-                            onChangeText={setTempIp}
-                          />
-                          <Pressable style={styles.ipSaveBtn} onPress={handleSaveIp}>
-                            <Ionicons name="checkmark" size={12} color="#FFF" />
-                          </Pressable>
-                          <Pressable style={styles.ipCancelBtn} onPress={() => setIsEditingIp(false)}>
-                            <Ionicons name="close" size={12} color="#555" />
-                          </Pressable>
-                        </View>
-                      ) : (
-                        <Pressable style={styles.ipPill} onPress={() => setIsEditingIp(true)}>
-                          <Ionicons name="settings-outline" size={10} color="#666" />
-                          <ThemedText style={styles.ipPillText}>
-                            {currentIp ? `IP: ${currentIp}` : 'SET LAN IP FOR MOBILE'}
-                          </ThemedText>
-                        </Pressable>
-                      )}
-                    </View>
-                  )}
-                </View>
-              ) : (
-                <Pressable 
-                  style={styles.arGuideBtn}
-                  onPress={() => setArModalVisible(true)}
-                >
-                  <ThemedText style={styles.arGuideBtnText}>Launch AR Mode</ThemedText>
-                </Pressable>
-              )}
-            </View>
 
           </View>
 
@@ -425,65 +385,7 @@ export default function ShopScreen() {
         <FooterHero />
       </ScrollView>
 
-      {/* Simulated Fullscreen AR Mode Overlay Modal */}
-      <Modal
-        animationType="slide"
-        transparent={false}
-        visible={arModalVisible}
-        onRequestClose={() => setArModalVisible(false)}
-      >
-        <View style={styles.arContainer}>
-          {/* Simulated Living Room Camera Background */}
-          <Image 
-            source={require('@/assets/images/hero-sofa.png')} 
-            style={styles.arCameraFeed} 
-            resizeMode="cover"
-          />
-          <View style={styles.arScrim} />
 
-          {/* Floating 3D Chair Model in center */}
-          <View style={styles.arCanvasContainer}>
-            <Product3DViewer customColor={selectedProduct.color} autoRotate={false} />
-          </View>
-
-          {/* Symmetrical Top Actions */}
-          <View style={styles.arHeader}>
-            <Pressable 
-              style={styles.arRoundBtn} 
-              onPress={() => setArModalVisible(false)}
-            >
-              <Ionicons name="close" size={20} color="#111" />
-            </Pressable>
-            <View style={styles.arTitleContainer}>
-              <ThemedText style={styles.arTitleText}>3D AR PLACEMENT</ThemedText>
-              <ThemedText style={styles.arSubTitleText}>Live Scale Simulation</ThemedText>
-            </View>
-            <View style={{ width: 40 }} />
-          </View>
-
-          {/* Bottom Placement Actions */}
-          <View style={styles.arFooter}>
-            <Pressable 
-              style={styles.arActionBtn}
-              onPress={() => alert('Scale locked! Item calibrated to room coordinates.')}
-            >
-              <Ionicons name="checkmark-circle-outline" size={18} color="#111" />
-              <ThemedText style={styles.arActionBtnText}>Lock Position</ThemedText>
-            </Pressable>
-            
-            <Pressable 
-              style={[styles.arActionBtn, { backgroundColor: '#111' }]}
-              onPress={() => {
-                alert('Snapshot saved to library!');
-                setArModalVisible(false);
-              }}
-            >
-              <Ionicons name="camera" size={18} color="#FFF" />
-              <ThemedText style={[styles.arActionBtnText, { color: '#FFF' }]}>Capture Snapshot</ThemedText>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
 
     </ThemedView>
   );
@@ -948,5 +850,59 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     textAlign: 'center',
     fontStyle: 'italic',
+  },
+  shopTagOut: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    backgroundColor: '#FFE4E6',
+    borderColor: '#FECDD3',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    zIndex: 10,
+  },
+  shopTagTextOut: {
+    color: '#9F1239',
+    fontSize: 8,
+    fontFamily: 'Inter-Bold',
+    textTransform: 'uppercase',
+  },
+  shopTagLow: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    zIndex: 10,
+  },
+  shopTagTextLow: {
+    color: '#92400E',
+    fontSize: 8,
+    fontFamily: 'Inter-Bold',
+    textTransform: 'uppercase',
+  },
+  shopTagSale: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    zIndex: 10,
+  },
+  shopTagTextSale: {
+    color: '#DC2626',
+    fontSize: 8,
+    fontFamily: 'Inter-Bold',
+    textTransform: 'uppercase',
   },
 });

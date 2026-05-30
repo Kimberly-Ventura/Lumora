@@ -146,7 +146,7 @@ export default function WelcomeScreen() {
           <View style={styles.mobileButtonWrapper}>
             <GlassButton 
               title="Get Started" 
-              onPress={() => router.replace('/(auth)/artutorial')} 
+              onPress={() => router.replace('/(tabs)')} 
               dark={false}
             />
           </View>

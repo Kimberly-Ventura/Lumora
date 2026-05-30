@@ -81,7 +81,7 @@ export default function AboutScreen() {
 
           <View style={styles.quoteBlock}>
             <ThemedText style={styles.quoteText}>
-              "Simplicity is the ultimate sophistication. Lumora is the pursuit of that pure harmony."
+              &quot;Simplicity is the ultimate sophistication. Lumora is the pursuit of that pure harmony.&quot;
             </ThemedText>
             <ThemedText style={styles.quoteAuthor}>— ALBERT VERO, HEAD ARTISAN</ThemedText>
           </View>

@@ -170,7 +170,7 @@ export default function BlogScreen() {
                   <View style={styles.editorialQuoteCard}>
                     <Ionicons name="chatbubble-ellipses-outline" size={24} color="#E7E0D8" />
                     <ThemedText style={styles.editorialQuote}>
-                      "Quiet Luxury is not about showing wealth; it is about absolute clarity of form, texture, and spacing."
+                      &quot;Quiet Luxury is not about showing wealth; it is about absolute clarity of form, texture, and spacing.&quot;
                     </ThemedText>
                   </View>
                 </View>

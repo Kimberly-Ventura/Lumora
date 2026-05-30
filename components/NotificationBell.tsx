@@ -15,7 +15,9 @@ import { useNotifications, type Notification } from '@/hooks/use-notifications';
 // ─── Relative time helper ────────────────────────────────────────────────────
 
 function relativeTime(iso: string): string {
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  // Supabase timestamps have no timezone suffix — append Z to treat as UTC
+  const utcIso = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z';
+  const diff = Math.floor((Date.now() - new Date(utcIso).getTime()) / 1000);
   if (diff < 60) return 'Just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -39,6 +41,16 @@ const TYPE_CONFIG = {
     icon: 'person-add-outline' as const,
     color: '#4CAF50',
     route: '/(admin)/customers',
+  },
+  order_cancelled: {
+    icon: 'close-circle-outline' as const,
+    color: '#A1261B',
+    route: '/(admin)/orders',
+  },
+  out_of_stock: {
+    icon: 'alert-circle-outline' as const,
+    color: '#C0392B',
+    route: '/(admin)/products',
   },
 };
 
@@ -166,10 +178,12 @@ function NotificationPanel({
   const router = useRouter();
 
   const handleItem = useCallback(
-    async (item: Notification) => {
-      await onMarkAsRead(item.id);
+    (item: Notification) => {
+      onMarkAsRead(item.id);
       onClose();
-      router.push(TYPE_CONFIG[item.type].route as any);
+      if (TYPE_CONFIG[item.type]?.route) {
+        router.push(TYPE_CONFIG[item.type].route as any);
+      }
     },
     [onMarkAsRead, onClose, router]
   );
@@ -212,6 +226,17 @@ function NotificationPanel({
           ))}
         </ScrollView>
       )}
+
+      {/* Footer */}
+      <Pressable 
+        style={panelStyles.footer}
+        onPress={() => {
+          onClose();
+          router.push('/(admin)/notifications' as any);
+        }}
+      >
+        <Text style={panelStyles.footerText}>See all notifications</Text>
+      </Pressable>
     </View>
   );
 }
@@ -268,12 +293,25 @@ const panelStyles = StyleSheet.create({
     fontSize: 13,
     color: '#A09080',
   },
+  footer: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(43,31,20,0.08)',
+    paddingVertical: 12,
+    alignItems: 'center',
+    backgroundColor: '#FAF7F2',
+  },
+  footerText: {
+    fontFamily: 'DMSans-Bold',
+    fontSize: 13,
+    color: '#C9A96E',
+  },
 });
 
 // ─── Bell button (exported) ──────────────────────────────────────────────────
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
+  const bellRef = useRef<any>(null);
 
   // Single hook call — data flows down to the panel as props
   const { notifications, loading, fetchError, unreadCount, markAsRead, markAllAsRead } =
@@ -285,7 +323,8 @@ export function NotificationBell() {
 
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest?.('[data-notification-bell]')) {
+      // Use standard DOM contains check for web
+      if (bellRef.current && !bellRef.current.contains(target)) {
         setOpen(false);
       }
     };
@@ -299,8 +338,7 @@ export function NotificationBell() {
   }, [open]);
 
   return (
-    // @ts-ignore — data-* attribute for web click-outside detection
-    <View style={bellStyles.wrapper} data-notification-bell>
+    <View ref={bellRef} style={bellStyles.wrapper}>
       <Pressable
         style={({ hovered }: any) => [
           bellStyles.btn,
@@ -341,6 +379,8 @@ const bellStyles = StyleSheet.create({
   wrapper: {
     position: 'relative',
     marginLeft: 8,
+    zIndex: 1000,
+    elevation: 1000,
   },
   btn: {
     width: 36,

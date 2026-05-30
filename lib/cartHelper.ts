@@ -83,6 +83,19 @@ export async function clearCart(): Promise<void> {
   }
 }
 
+export async function clearSelectedFromCart(selectedKeys: string[]): Promise<void> {
+  try {
+    const currentList = await getCart();
+    const newList = currentList.filter(item => {
+      const itemKey = `${item.id}-${item.selectedColor || ''}`;
+      return !selectedKeys.includes(itemKey);
+    });
+    await saveCart(newList);
+  } catch (e) {
+    console.error('Error clearing selected from cart', e);
+  }
+}
+
 export async function updateCartItem(id: string, oldColor: string | undefined, updatedFields: Partial<CartItem>): Promise<CartItem[]> {
   const currentList = await getCart();
   const existingIndex = currentList.findIndex(
