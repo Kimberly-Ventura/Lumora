@@ -1,0 +1,128 @@
+﻿
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(admin)\_layout.tsx
+    6:3  warning  'Platform' is defined but never used                                                                       @typescript-eslint/no-unused-vars
+   36:9  warning  'router' is assigned a value but never used                                                                @typescript-eslint/no-unused-vars
+  101:6  warning  React Hook useEffect has a missing dependency: 'router'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  221:6  warning  React Hook useEffect has a missing dependency: 'router'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(admin)\add-product.tsx
+   32:10  warning  'modelFileName' is assigned a value but never used                                                             @typescript-eslint/no-unused-vars
+   69:6   warning  React Hook useEffect has a missing dependency: 'isEditMode'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  111:13  warning  'data' is assigned a value but never used                                                                      @typescript-eslint/no-unused-vars
+  134:13  warning  'data' is assigned a value but never used                                                                      @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(admin)\customers.tsx
+  2:46  warning  'Platform' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(admin)\index.tsx
+  2:46  warning  'Platform' is defined but never used  @typescript-eslint/no-unused-vars
+  4:10  warning  'Ionicons' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(admin)\settings.tsx
+  4:10  warning  'Ionicons' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(auth)\artutorial.tsx
+    2:90   warning  'Text' is defined but never used                                                                                                                                                                        @typescript-eslint/no-unused-vars
+    2:102  warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times                                                                                                     import/no-duplicates
+    5:32   warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times                                                                                                     import/no-duplicates
+    9:10   warning  'Image' is defined but never used                                                                                                                                                                       @typescript-eslint/no-unused-vars
+   16:24   warning  A `require()` style import is forbidden                                                                                                                                                                 @typescript-eslint/no-require-imports
+   21:9    warning  'width' is assigned a value but never used                                                                                                                                                              @typescript-eslint/no-unused-vars
+   35:9    warning  'colors' is assigned a value but never used                                                                                                                                                             @typescript-eslint/no-unused-vars
+   67:41   error    React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?              react-hooks/rules-of-hooks
+   68:45   error    React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?              react-hooks/rules-of-hooks
+   69:43   error    React Hook "useCameraPermissions" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?  react-hooks/rules-of-hooks
+   71:39   error    React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?              react-hooks/rules-of-hooks
+   72:37   error    React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?              react-hooks/rules-of-hooks
+   73:45   error    React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?              react-hooks/rules-of-hooks
+   76:23   error    React Hook "useRef" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?                react-hooks/rules-of-hooks
+   77:22   error    React Hook "useRef" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?                react-hooks/rules-of-hooks
+   78:22   error    React Hook "useRef" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?                react-hooks/rules-of-hooks
+   81:3    error    React Hook "useEffect" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?             react-hooks/rules-of-hooks
+   93:6    warning  React Hook useEffect has a missing dependency: 'gridOpacity'. Either include it or remove the dependency array                                                                                          react-hooks/exhaustive-deps
+   96:3    error    React Hook "useEffect" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?             react-hooks/rules-of-hooks
+  106:6    warning  React Hook useEffect has a missing dependency: 'pulseScale'. Either include it or remove the dependency array                                                                                           react-hooks/exhaustive-deps
+  235:54   error    `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`                                                                                                                                         react/no-unescaped-entities
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(auth)\signin.tsx
+    2:90   warning  'Alert' is defined but never used                                                                    @typescript-eslint/no-unused-vars
+    2:103  warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times  import/no-duplicates
+    5:32   warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times  import/no-duplicates
+   10:10   warning  'Ionicons' is defined but never used                                                                 @typescript-eslint/no-unused-vars
+  151:56   error    `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`                                      react/no-unescaped-entities
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(auth)\signup.tsx
+  2:90   warning  'Alert' is defined but never used                                                                    @typescript-eslint/no-unused-vars
+  2:103  warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times  import/no-duplicates
+  5:32   warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times  import/no-duplicates
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(auth)\welcome.tsx
+  2:65  warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times  import/no-duplicates
+  5:32  warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times  import/no-duplicates
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(tabs)\_layout.tsx
+   4:10  warning  'Platform' is defined but never used        @typescript-eslint/no-unused-vars
+  17:11  warning  'width' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(tabs)\cart.tsx
+    2:58  warning  'Platform' is defined but never used               @typescript-eslint/no-unused-vars
+  123:17  warning  'itemSubtotal' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\(tabs)\index.tsx
+   17:10  warning  'Hero' is defined but never used                        @typescript-eslint/no-unused-vars
+   18:10  warning  'FeaturesSection' is defined but never used             @typescript-eslint/no-unused-vars
+   19:10  warning  'FooterHero' is defined but never used                  @typescript-eslint/no-unused-vars
+   22:27  warning  'Typography' is defined but never used                  @typescript-eslint/no-unused-vars
+   84:10  warning  'isScrolled' is assigned a value but never used         @typescript-eslint/no-unused-vars
+   84:22  warning  'setIsScrolled' is assigned a value but never used      @typescript-eslint/no-unused-vars
+   90:26  warning  'setActiveCategory' is assigned a value but never used  @typescript-eslint/no-unused-vars
+   91:10  warning  'activeRoom' is assigned a value but never used         @typescript-eslint/no-unused-vars
+   91:22  warning  'setActiveRoom' is assigned a value but never used      @typescript-eslint/no-unused-vars
+  195:9   warning  'username' is assigned a value but never used           @typescript-eslint/no-unused-vars
+  198:9   warning  'filteredProducts' is assigned a value but never used   @typescript-eslint/no-unused-vars
+  410:72  warning  A `require()` style import is forbidden                 @typescript-eslint/no-require-imports
+  694:28  warning  A `require()` style import is forbidden                 @typescript-eslint/no-require-imports
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\_layout.tsx
+  12:20  warning  'View' is defined but never used        @typescript-eslint/no-unused-vars
+  12:26  warning  'Text' is defined but never used        @typescript-eslint/no-unused-vars
+  12:32  warning  'StyleSheet' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\about.tsx
+  84:15   error  `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+  84:102  error  `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\blog.tsx
+   79:9    warning  'router' is assigned a value but never used                      @typescript-eslint/no-unused-vars
+  173:23   error    `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+  173:125  error    `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\contact.tsx
+  23:9  warning  'router' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\notifications.tsx
+  160:15  error  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\product-list.tsx
+  28:7  warning  'CATEGORY_COLORS' is assigned a value but never used                                                                @typescript-eslint/no-unused-vars
+  53:8  warning  React Hook useCallback has a missing dependency: 'fetchProducts'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\product\[id].tsx
+   12:8   warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times                                     import/no-duplicates
+   18:27  warning  'Typography' is defined but never used                                                                                                  @typescript-eslint/no-unused-vars
+   19:32  warning  'C:\Users\COMPUTER 26\E-Commerce\Lumora\node_modules\react-native\index.js' imported multiple times                                     import/no-duplicates
+   24:16  warning  'windowWidth' is assigned a value but never used                                                                                        @typescript-eslint/no-unused-vars
+  163:6   warning  React Hook useEffect has a missing dependency: 'checkFavorite'. Either include it or remove the dependency array                        react-hooks/exhaustive-deps
+  211:35  error    React Hook "useWindowDimensions" is called conditionally. React Hooks must be called in the exact same order in every component render  react-hooks/rules-of-hooks
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\shop.tsx
+  26:16  warning  'windowWidth' is assigned a value but never used         @typescript-eslint/no-unused-vars
+  26:37  warning  'windowHeight' is assigned a value but never used        @typescript-eslint/no-unused-vars
+  54:27  warning  'setSelectedProduct' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\COMPUTER 26\E-Commerce\Lumora\app\wishlist.tsx
+  1:30  warning  'useEffect' is defined but never used  @typescript-eslint/no-unused-vars
+
+Γ£û 82 problems (19 errors, 63 warnings)
+  0 errors and 5 warnings potentially fixable with the `--fix` option.
+
